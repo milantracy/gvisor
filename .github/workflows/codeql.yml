@@ -11,7 +11,7 @@ name: "CodeQL"
 on:
   schedule:
     # Weekly on Sunday.
-    - cron: '30 1 * * 0'
+    - cron: '35 16 * * 0'
 
 jobs:
   analyze:
