@@ -9,7 +9,7 @@ require (
 	github.com/cilium/ebpf v0.12.3
 	github.com/containerd/cgroups v1.0.1
 	github.com/containerd/console v1.0.1
-	github.com/containerd/containerd v1.4.13
+	github.com/containerd/containerd v1.6.36
 	github.com/containerd/fifo v1.0.0
 	github.com/containerd/go-runc v1.0.0
 	github.com/containerd/typeurl v1.0.2
@@ -41,6 +41,8 @@ require (
 	github.com/Microsoft/go-winio v0.6.0 // indirect
 	github.com/Microsoft/hcsshim v0.8.14 // indirect
 	github.com/containerd/continuity v0.3.0 // indirect
+	github.com/containerd/errdefs v0.1.0 // indirect
+	github.com/containerd/log v0.1.0 // indirect
 	github.com/containerd/ttrpc v1.1.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/docker/go-units v0.4.0 // indirect
