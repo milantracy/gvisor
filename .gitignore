@@ -9,3 +9,7 @@
 /repo.key
 # Generate webhook admission.
 /test/kubernetes/gvisor-injection-admission-webhook.yaml
+# gemini-cli settings
+.gemini/
+# GitHub App credentials
+gha-creds-*.json
