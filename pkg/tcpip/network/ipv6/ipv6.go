@@ -815,6 +815,50 @@ func (e *endpoint) handleFragments(r *stack.Route, networkMTU uint32, pkt *stack
 	}
 }
 
+// handleTCPSegments splits an oversized TCP packet into segments carrying at
+// most mss payload bytes each and writes them out. It returns the number of
+// segments sent and the number left unsent.
+//
+// The IP header must already be present in the original packet, and the packet
+// must have had its transport header parsed.
+func (e *endpoint) handleTCPSegments(r *stack.Route, mss int, pkt *stack.PacketBuffer) (int, int, tcpip.Error) {
+	networkHeader := header.IPv6(pkt.NetworkHeader().Slice())
+	ts := ip.MakeTCPSegmenter(pkt, mss, pkt.AvailableHeaderBytes()+len(networkHeader))
+	defer ts.Release()
+
+	var n int
+	for {
+		segPkt, copied, more := ts.BuildNextSegment()
+
+		// The checksum must be computed before the network header is pushed,
+		// while segPkt.Size() is still the length the pseudo-header needs.
+		ip.SetTCPChecksum(segPkt, header.PseudoHeaderChecksum(
+			header.TCPProtocolNumber,
+			networkHeader.SourceAddress(),
+			networkHeader.DestinationAddress(),
+			uint16(segPkt.Size()),
+		))
+
+		segHeader := header.IPv6(segPkt.NetworkHeader().Push(len(networkHeader)))
+		if n := copy(segHeader, networkHeader); n != len(networkHeader) {
+			panic(fmt.Sprintf("wrong number of bytes copied into the segment's IP header: got = %d, want = %d", n, len(networkHeader)))
+		}
+		segPkt.NetworkProtocolNumber = ProtocolNumber
+		segPkt.NetworkPacketInfo = pkt.NetworkPacketInfo
+		segHeader.SetPayloadLength(uint16(len(segHeader) - header.IPv6MinimumSize + len(segPkt.TransportHeader().Slice()) + copied))
+
+		err := e.nic.WritePacket(r, segPkt)
+		segPkt.DecRef()
+		if err != nil {
+			return n, ts.RemainingSegmentCount() + 1, err
+		}
+		n++
+		if !more {
+			return n, ts.RemainingSegmentCount(), nil
+		}
+	}
+}
+
 // WritePacket writes a packet to the given destination address and protocol.
 func (e *endpoint) WritePacket(r *stack.Route, params stack.NetworkHeaderParams, pkt *stack.PacketBuffer) tcpip.Error {
 	dstAddr := r.RemoteAddress()
@@ -895,6 +939,17 @@ func (e *endpoint) writePacket(r *stack.Route, pkt *stack.PacketBuffer, protocol
 
 	if packetMustBeFragmented(pkt, networkMTU) {
 		if pkt.NetworkPacketInfo.IsForwardedPacket {
+			// A forwarded TCP packet can be split into segments that fit even
+			// though a router may not fragment it. This is not a rare case: a
+			// host that coalesces on receive (GRO) hands us packets far larger
+			// than any MTU, and dropping them leaves the sender to make
+			// progress only through RTO retransmits.
+			if mss := int(networkMTU) - len(pkt.TransportHeader().Slice()); ip.TCPSegmentable(pkt, mss) {
+				sent, remain, err := e.handleTCPSegments(r, mss, pkt)
+				stats.PacketsSent.IncrementBy(uint64(sent))
+				stats.OutgoingPacketErrors.IncrementBy(uint64(remain))
+				return err
+			}
 			// As per RFC 2460, section 4.5:
 			//   Unlike IPv4, fragmentation in IPv6 is performed only by source nodes,
 			//   not by routers along a packet's delivery path.

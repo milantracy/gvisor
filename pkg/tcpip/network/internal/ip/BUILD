@@ -13,6 +13,7 @@ go_library(
         "generic_multicast_protocol.go",
         "reject_with_reset.go",
         "stats.go",
+        "tcp_segmentation.go",
     ],
     visibility = [
         "//pkg/tcpip/network/arp:__pkg__",
@@ -23,7 +24,9 @@ go_library(
         "//pkg/buffer",
         "//pkg/sync",
         "//pkg/tcpip",
+        "//pkg/tcpip/checksum",
         "//pkg/tcpip/header",
+        "//pkg/tcpip/seqnum",
         "//pkg/tcpip/stack",
     ],
 )
@@ -34,13 +37,17 @@ go_test(
     srcs = [
         "duplicate_address_detection_test.go",
         "generic_multicast_protocol_test.go",
+        "tcp_segmentation_test.go",
     ],
     deps = [
         ":ip",
+        "//pkg/buffer",
         "//pkg/sync",
         "//pkg/tcpip",
+        "//pkg/tcpip/checksum",
         "//pkg/tcpip/faketime",
         "//pkg/tcpip/header",
+        "//pkg/tcpip/seqnum",
         "//pkg/tcpip/stack",
         "@com_github_google_go_cmp//cmp:go_default_library",
     ],

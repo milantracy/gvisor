@@ -520,6 +520,54 @@ func (e *endpoint) handleFragments(_ *stack.Route, networkMTU uint32, pkt *stack
 	}
 }
 
+// handleTCPSegments splits an oversized TCP packet into segments carrying at
+// most mss payload bytes each and writes them out. It returns the number of
+// segments sent and the number left unsent.
+//
+// The IP header must already be present in the original packet, and the packet
+// must have had its transport header parsed.
+func (e *endpoint) handleTCPSegments(r *stack.Route, mss int, pkt *stack.PacketBuffer) (int, int, tcpip.Error) {
+	networkHeader := header.IPv4(pkt.NetworkHeader().Slice())
+	ts := ip.MakeTCPSegmenter(pkt, mss, pkt.AvailableHeaderBytes()+len(networkHeader))
+	defer ts.Release()
+
+	var n int
+	for {
+		segPkt, copied, more := ts.BuildNextSegment()
+
+		// The checksum must be computed before the network header is pushed,
+		// while segPkt.Size() is still the length the pseudo-header needs.
+		ip.SetTCPChecksum(segPkt, header.PseudoHeaderChecksum(
+			header.TCPProtocolNumber,
+			networkHeader.SourceAddress(),
+			networkHeader.DestinationAddress(),
+			uint16(segPkt.Size()),
+		))
+
+		segHeader := header.IPv4(segPkt.NetworkHeader().Push(len(networkHeader)))
+		if n := copy(segHeader, networkHeader); n != len(networkHeader) {
+			panic(fmt.Sprintf("wrong number of bytes copied into the segment's IP header: got = %d, want = %d", n, len(networkHeader)))
+		}
+		segPkt.NetworkProtocolNumber = ProtocolNumber
+		segPkt.NetworkPacketInfo = pkt.NetworkPacketInfo
+		// Every segment is an atomic datagram (DF set, no fragment offset), so
+		// per RFC 6864 its ID is ignored by the receiver and may be reused.
+		segHeader.SetTotalLength(uint16(len(segHeader) + len(segPkt.TransportHeader().Slice()) + copied))
+		segHeader.SetChecksum(0)
+		segHeader.SetChecksum(^segHeader.CalculateChecksum())
+
+		err := e.nic.WritePacket(r, segPkt)
+		segPkt.DecRef()
+		if err != nil {
+			return n, ts.RemainingSegmentCount() + 1, err
+		}
+		n++
+		if !more {
+			return n, ts.RemainingSegmentCount(), nil
+		}
+	}
+}
+
 // recalculateChecksum recalculates the checksum of a TCP packet.
 func recalculateChecksum(pkt *stack.PacketBuffer, r *stack.Route) tcpip.Error {
 	// RXChecksumValidated indicates that checksum verification may be
@@ -680,6 +728,17 @@ func (e *endpoint) writePacketPostRouting(r *stack.Route, pkt *stack.PacketBuffe
 	if packetMustBeFragmented(pkt, networkMTU) {
 		h := header.IPv4(pkt.NetworkHeader().Slice())
 		if h.Flags()&header.IPv4FlagDontFragment != 0 && pkt.NetworkPacketInfo.IsForwardedPacket {
+			// A forwarded TCP packet can be split into segments that fit even
+			// though it cannot be fragmented. This is not a rare case: a host
+			// that coalesces on receive (GRO) hands us packets far larger than
+			// any MTU, and dropping them leaves the sender to make progress
+			// only through RTO retransmits.
+			if mss := int(networkMTU) - len(pkt.TransportHeader().Slice()); ip.TCPSegmentable(pkt, mss) {
+				sent, remain, err := e.handleTCPSegments(r, mss, pkt)
+				stats.PacketsSent.IncrementBy(uint64(sent))
+				stats.OutgoingPacketErrors.IncrementBy(uint64(remain))
+				return err
+			}
 			// TODO(gvisor.dev/issue/5919): Handle error condition in which DontFragment
 			// is set but the packet must be fragmented for the non-forwarding case.
 			return &tcpip.ErrMessageTooLong{}
