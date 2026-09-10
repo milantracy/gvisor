@@ -16,6 +16,7 @@ package boot
 
 import (
 	"gvisor.dev/gvisor/pkg/log"
+	"gvisor.dev/gvisor/pkg/sync"
 )
 
 type debug struct {
@@ -24,6 +25,8 @@ type debug struct {
 // Stacks collects all sandbox stacks and copies them to 'stacks'.
 func (*debug) Stacks(_ *struct{}, stacks *string) error {
 	buf := log.Stacks(true)
-	*stacks = string(buf)
+	// Append RWMutex holders, which can include locks leaked by exited
+	// goroutines.
+	*stacks = string(buf) + "\n" + sync.DumpLockHolders()
 	return nil
 }

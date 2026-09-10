@@ -244,8 +244,10 @@ func (rw *RWMutex) TryRLock() bool {
 	locked := rw.m.TryRLock()
 	if !locked {
 		noteUnlock(unsafe.Pointer(rw))
+		return false
 	}
-	return locked
+	noteHolderRLock(unsafe.Pointer(rw))
+	return true
 }
 
 // RLock locks rw for reading.
@@ -257,6 +259,7 @@ func (rw *RWMutex) TryRLock() bool {
 func (rw *RWMutex) RLock() {
 	noteLock(unsafe.Pointer(rw))
 	rw.m.RLock()
+	noteHolderRLock(unsafe.Pointer(rw))
 }
 
 // RUnlock undoes a single RLock call.
@@ -267,6 +270,7 @@ func (rw *RWMutex) RLock() {
 //
 // +checklocksignore
 func (rw *RWMutex) RUnlock() {
+	noteHolderRUnlock(unsafe.Pointer(rw))
 	rw.m.RUnlock()
 	noteUnlock(unsafe.Pointer(rw))
 }
@@ -280,8 +284,10 @@ func (rw *RWMutex) TryLock() bool {
 	locked := rw.m.TryLock()
 	if !locked {
 		noteUnlock(unsafe.Pointer(rw))
+		return false
 	}
-	return locked
+	noteHolderWLock(unsafe.Pointer(rw))
+	return true
 }
 
 // Lock locks rw for writing. If the lock is already locked for reading or
@@ -290,6 +296,7 @@ func (rw *RWMutex) TryLock() bool {
 func (rw *RWMutex) Lock() {
 	noteLock(unsafe.Pointer(rw))
 	rw.m.Lock()
+	noteHolderWLock(unsafe.Pointer(rw))
 }
 
 // Unlock unlocks rw for writing.
@@ -300,6 +307,7 @@ func (rw *RWMutex) Lock() {
 //
 // +checklocksignore
 func (rw *RWMutex) Unlock() {
+	noteHolderWUnlock(unsafe.Pointer(rw))
 	rw.m.Unlock()
 	noteUnlock(unsafe.Pointer(rw))
 }
@@ -311,6 +319,7 @@ func (rw *RWMutex) Unlock() {
 //
 // +checklocksignore
 func (rw *RWMutex) DowngradeLock() {
-	// No note change for DowngradeLock.
+	// Still held by this goroutine, so noteLock/noteUnlock are unchanged.
 	rw.m.DowngradeLock()
+	noteHolderDowngrade(unsafe.Pointer(rw))
 }

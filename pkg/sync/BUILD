@@ -18,6 +18,8 @@ go_library(
         "gate_unsafe.go",
         "goyield_go113_unsafe.go",
         "goyield_unsafe.go",
+        "lockholders_off_unsafe.go",
+        "lockholders_on_unsafe.go",
         "mutex_unsafe.go",
         "nocopy.go",
         "norace_unsafe.go",
