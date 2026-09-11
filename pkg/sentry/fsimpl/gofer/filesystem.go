@@ -818,7 +818,7 @@ func (fs *filesystem) GetParentDentryAt(ctx context.Context, rp *vfs.ResolvingPa
 
 // LinkAt implements vfs.FilesystemImpl.LinkAt.
 func (fs *filesystem) LinkAt(ctx context.Context, rp *vfs.ResolvingPath, vd vfs.VirtualDentry) error {
-	err := fs.doCreateAt(ctx, rp, false /* dir */, func(parent *dentry, name string, ds **[]*dentry) (*dentry, error) {
+	return fs.doCreateAt(ctx, rp, false /* dir */, func(parent *dentry, name string, ds **[]*dentry) (*dentry, error) {
 		if rp.Mount() != vd.Mount() {
 			return nil, linuxerr.EXDEV
 		}
@@ -841,15 +841,15 @@ func (fs *filesystem) LinkAt(ctx context.Context, rp *vfs.ResolvingPath, vd vfs.
 		if d.inode.isSynthetic() {
 			return nil, linuxerr.EOPNOTSUPP
 		}
-		return parent.link(ctx, d, name)
+		child, err := parent.link(ctx, d, name)
+		if err != nil {
+			return nil, err
+		}
+		d.incLinks()
+		// Ordered before the parent's IN_CREATE, which doCreateAt emits.
+		d.inode.watches.Notify(ctx, "", linux.IN_ATTRIB, 0, vfs.InodeEvent, false /* unlinked */)
+		return child, nil
 	}, nil)
-
-	if err == nil {
-		// Success!
-		vd.Dentry().Impl().(*dentry).incLinks()
-	}
-
-	return err
 }
 
 // MkdirAt implements vfs.FilesystemImpl.MkdirAt.
@@ -1666,6 +1666,7 @@ func (fs *filesystem) RenameAt(ctx context.Context, rp *vfs.ResolvingPath, oldPa
 	}
 	if replaced != nil {
 		replaced.setDeleted()
+		replaced.decLinks()
 		// If an extra reference is held on replaced as described by the
 		// comment for dentry.refs, drop that reference now. We can't race with
 		// fs.unlinkAt() or invalidation since fs.renameMu has been locked for
@@ -1715,6 +1716,11 @@ func (fs *filesystem) RenameAt(ctx context.Context, rp *vfs.ResolvingPath, oldPa
 		}
 	}
 	vfs.InotifyRename(ctx, &renamed.inode.watches, &oldParent.inode.watches, &newParent.inode.watches, oldName, newName, renamed.isDir())
+	if replaced != nil {
+		// Ordered between the parents' IN_MOVED_FROM/IN_MOVED_TO and replaced's
+		// IN_DELETE_SELF/IN_IGNORED.
+		replaced.inode.watches.Notify(ctx, "", linux.IN_ATTRIB, 0, vfs.InodeEvent, true /* unlinked */)
+	}
 	return nil
 }
 

@@ -856,6 +856,39 @@ TEST(Inotify, MoveWatchedTargetGeneratesEvents) {
   EXPECT_EQ(events[0].cookie, events[1].cookie);
 }
 
+TEST(Inotify, RenameOverWatchedTargetGeneratesDeleteSelf) {
+  const TempPath root = ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateDir());
+  const FileDescriptor fd =
+      ASSERT_NO_ERRNO_AND_VALUE(InotifyInit1(IN_NONBLOCK));
+
+  const TempPath file1 =
+      ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateFileIn(root.path()));
+  TempPath file2 =
+      ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateFileIn(root.path()));
+
+  const int root_wd = ASSERT_NO_ERRNO_AND_VALUE(
+      InotifyAddWatch(fd.get(), root.path(), IN_ALL_EVENTS));
+  const int file1_wd = ASSERT_NO_ERRNO_AND_VALUE(
+      InotifyAddWatch(fd.get(), file1.path(), IN_ALL_EVENTS));
+
+  const std::string oldpath = file2.release();
+  EXPECT_THAT(rename(oldpath.c_str(), file1.path().c_str()),
+              SyscallSucceeds());
+  const std::vector<Event> events =
+      ASSERT_NO_ERRNO_AND_VALUE(DrainEvents(fd.get()));
+  ASSERT_THAT(
+      events,
+      Are({Event(IN_MOVED_FROM, root_wd, Basename(oldpath), events[0].cookie),
+           Event(IN_MOVED_TO, root_wd, Basename(file1.path()),
+                 events[1].cookie),
+           Event(IN_ATTRIB, file1_wd), Event(IN_DELETE_SELF, file1_wd),
+           Event(IN_IGNORED, file1_wd)}));
+  EXPECT_EQ(events[0].cookie, events[1].cookie);
+
+  EXPECT_THAT(inotify_rm_watch(fd.get(), file1_wd),
+              SyscallFailsWithErrno(EINVAL));
+}
+
 // Tests that close events are only emitted when a file description drops its
 // last reference.
 TEST(Inotify, DupFD) {
@@ -1415,10 +1448,6 @@ TEST(Inotify, SymlinkFollow) {
 }
 
 TEST(Inotify, LinkGeneratesAttribAndCreateEvents) {
-  // Inotify does not work properly with hard links in gofer and overlay fs.
-  SKIP_IF(IsRunningOnGvisor() &&
-          !ASSERT_NO_ERRNO_AND_VALUE(IsTmpfs(GetAbsoluteTestTmpdir())));
-
   const TempPath root = ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateDir());
   const TempPath file1 =
       ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateFileIn(root.path()));
@@ -1461,9 +1490,9 @@ TEST(Inotify, UtimesGeneratesAttribEvent) {
 }
 
 TEST(Inotify, HardlinksReuseSameWatch) {
-  // Inotify does not work properly with hard links in gofer and overlay fs.
+  // Hard links do not share a watch set in overlay fs.
   SKIP_IF(IsRunningOnGvisor() &&
-          !ASSERT_NO_ERRNO_AND_VALUE(IsTmpfs(GetAbsoluteTestTmpdir())));
+          ASSERT_NO_ERRNO_AND_VALUE(IsOverlayfs(GetAbsoluteTestTmpdir())));
 
   const TempPath root = ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateDir());
   TempPath file =
@@ -1960,10 +1989,6 @@ TEST(Inotify, SpliceOnWatchTarget) {
 // Watches on a parent should not be triggered by actions on a hard link to one
 // of its children that has a different parent.
 TEST(Inotify, LinkOnOtherParent) {
-  // Inotify does not work properly with hard links in gofer and overlay fs.
-  SKIP_IF(IsRunningOnGvisor() &&
-          !ASSERT_NO_ERRNO_AND_VALUE(IsTmpfs(GetAbsoluteTestTmpdir())));
-
   const TempPath dir1 = ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateDir());
   const TempPath dir2 = ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateDir());
   const TempPath file =
@@ -2214,10 +2239,6 @@ TEST(Inotify, ExcludeUnlinkDirectory) {
 // We need to disable S/R because there are filesystems where we cannot re-open
 // fds to an unlinked file across S/R, e.g. gofer-backed filesystems.
 TEST(Inotify, ExcludeUnlinkMultipleChildren) {
-  // Inotify does not work properly with hard links in gofer and overlay fs.
-  SKIP_IF(IsRunningOnGvisor() &&
-          !ASSERT_NO_ERRNO_AND_VALUE(IsTmpfs(GetAbsoluteTestTmpdir())));
-
   const DisableSave ds;
 
   const TempPath dir = ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateDir());

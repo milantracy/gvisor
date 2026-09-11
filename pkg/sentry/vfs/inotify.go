@@ -141,7 +141,7 @@ func (i *Inotify) Release(ctx context.Context) {
 			panic("Cannot remove watch from an unwatchable dentry")
 		}
 		ws.Remove(i.id)
-		if ws.Size() == 0 {
+		if !ws.HasTarget(d) {
 			ds = append(ds, d)
 		}
 	}
@@ -375,10 +375,10 @@ func (i *Inotify) RmWatch(ctx context.Context, wd int32) error {
 		panic("Watched dentry cannot have nil watch set")
 	}
 	ws.Remove(w.OwnerID())
-	remaining := ws.Size()
+	targetWatched := ws.HasTarget(w.target)
 	i.mu.Unlock()
 
-	if remaining == 0 {
+	if !targetWatched {
 		w.target.OnZeroWatches(ctx)
 	}
 
@@ -400,11 +400,26 @@ type Watches struct {
 	ws map[uint64]*Watch
 }
 
-// Size returns the number of watches held by w.
+// Size returns the number of watches held by w, across all the dentries
+// sharing it.
 func (w *Watches) Size() int {
-	w.mu.Lock()
-	defer w.mu.Unlock()
+	w.mu.RLock()
+	defer w.mu.RUnlock()
 	return len(w.ws)
+}
+
+// HasTarget returns true if any watch in w targets d. The result cannot
+// concurrently change from false to true while d has no references, since
+// AddWatch requires one and Watch.target is immutable.
+func (w *Watches) HasTarget(d *Dentry) bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	for _, watch := range w.ws {
+		if watch.target == d {
+			return true
+		}
+	}
+	return false
 }
 
 // Lookup returns the watch owned by an inotify instance with the given id.

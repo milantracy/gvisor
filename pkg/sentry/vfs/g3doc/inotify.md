@@ -99,16 +99,16 @@ unimplemented in kernfs and anonfs; it does not seem particularly useful.
 The gofer filesystem has several traits that make it difficult to support
 inotify:
 
-*   **There are no inodes.** A file is represented as a dentry that holds an
-    unopened p9 file (and possibly an open FID), through which the Sentry
-    interacts with the gofer.
-    *   *Solution:* Because there is no inode structure stored in the sandbox,
-        inotify watches must be held on the dentry. For the purposes of inotify,
-        we assume that every dentry corresponds to a unique inode, which may
-        cause unexpected behavior in the presence of hard links, where multiple
-        dentries should share the same set of watches. Indeed, it is impossible
-        for us to be absolutely sure whether dentries correspond to the same
-        file or not, due to the following point:
+*   **Inodes are synthesized by the Sentry.** A file is represented by one
+    dentry per path, plus an inode shared by the dentries the Sentry can
+    identify as hard links to the same file: non-directory inodes are keyed by
+    the remote inode number and device in filesystem.inodeByKey.
+    *   *Solution:* Watches are held on the inode, so hard link aliases share
+        one watch set, as in Linux. Each watch records the dentry it targets, so
+        only that dentry is pinned out of the dentry cache; see
+        dentry.checkCachingLocked. Identification is best-effort, so this breaks
+        down for remote hard links the Sentry cannot detect, per the following
+        point:
 *   **The Sentry cannot always be aware of hard links on the remote
     filesystem.** There is no way for us to confirm whether two files on the
     remote filesystem are actually links to the same inode. QIDs and inodes are
@@ -126,12 +126,21 @@ inotify:
     a new dentry to be created next time the same file path is used. The
     existing watches will be lost.
     *   *Solution:* When a dentry reaches zero references, do not cache it if it
-        has any watches, so we can avoid eviction/destruction. Note that if the
-        dentry was deleted or invalidated (d.vfsd.IsDead()), we should still
-        destroy it along with its watches. Additionally, when a dentry’s last
-        watch is removed, we cache it if it also has zero references. This way,
-        the dentry can eventually be evicted from memory if it is no longer
-        needed.
+        is the target of any watch, so we can avoid eviction/destruction. Note
+        that if the dentry was deleted or invalidated (d.vfsd.IsDead()), we
+        should still destroy it. Additionally, when a dentry’s last watch is
+        removed, we cache it if it also has zero references. This way, the
+        dentry can eventually be evicted from memory if it is no longer needed.
+    *   Since watches live on the inode, destroying a dentry does not destroy
+        the watches targeting it: they survive on the shared watch set, pointing
+        at a destroyed dentry, for as long as one of the file’s other dentries
+        keeps the inode alive. The set is torn down, with IN_DELETE_SELF and
+        IN_IGNORED, only once the file’s last link is gone, as in Linux.
+    *   The link count driving that decision is best-effort: it is decremented
+        only for unlinks and renames the Sentry has a dentry for. A link removed
+        through an uncached path leaves it too high, and IN_DELETE_SELF and
+        IN_IGNORED are then never sent — the file goes on looking alive to the
+        watcher. Caching a watched file’s hard link aliases makes this likelier.
 *   **Dentries can be invalidated.** Another issue with dentry lifetime is that
     the remote file at the file path represented may change from underneath the
     dentry. In this case, the next time that the dentry is used, it will be
@@ -182,12 +191,13 @@ DentryImpl methods to allow interactions with targets on any FilesystemImpl:
     its parent’s.
 *   **Watches()** retrieves the watch set of the target represented by the
     dentry. This is used to access and modify watches on a target.
-*   **OnZeroWatches()** performs cleanup tasks after the last watch is removed
-    from a dentry. This is needed by gofer fs, which must allow a watched dentry
-    to be cached once it has no more watches. Most implementations can just do
-    nothing. Note that OnZeroWatches() must be called after all inotify locks
-    are released to preserve lock ordering, since it may acquire
-    FilesystemImpl-specific locks.
+*   **OnZeroWatches()** performs cleanup tasks after the last watch *targeting
+    that dentry* is removed; a watch set shared with the dentry's hard link
+    aliases may still be non-empty. This is needed by gofer fs, which must allow
+    a watched dentry to be cached once it has no more watches. Most
+    implementations can just do nothing. Note that OnZeroWatches() must be
+    called after all inotify locks are released to preserve lock ordering, since
+    it may acquire FilesystemImpl-specific locks.
 
 ## IN_EXCL_UNLINK
 

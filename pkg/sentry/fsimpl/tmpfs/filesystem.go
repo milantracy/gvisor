@@ -739,11 +739,8 @@ func (fs *filesystem) RenameAt(ctx context.Context, rp *vfs.ResolvingPath, oldPa
 	if replaced != nil {
 		newParentDir.removeChildLocked(replaced)
 		if replaced.inode.isDir() {
-			// Remove links for replaced/. and replaced/..
-			replaced.inode.decLinksLocked(ctx)
 			newParentDir.inode.decLinksLocked(ctx)
 		}
-		replaced.inode.decLinksLocked(ctx)
 	}
 	oldParentDir.removeChildLocked(renamed)
 	newParentDir.insertChildLocked(renamed, newName)
@@ -763,6 +760,16 @@ func (fs *filesystem) RenameAt(ctx context.Context, rp *vfs.ResolvingPath, oldPa
 	renamed.inode.touchCtime()
 
 	vfs.InotifyRename(ctx, &renamed.inode.watches, &oldParentDir.inode.watches, &newParentDir.inode.watches, oldName, newName, renamed.inode.isDir())
+	if replaced != nil {
+		// Ordered between the parents' IN_MOVED_FROM/IN_MOVED_TO and replaced's
+		// IN_DELETE_SELF/IN_IGNORED.
+		replaced.inode.watches.Notify(ctx, "", linux.IN_ATTRIB, 0, vfs.InodeEvent, true /* unlinked */)
+		if replaced.inode.isDir() {
+			// Remove links for replaced/. and replaced/..
+			replaced.inode.decLinksLocked(ctx)
+		}
+		replaced.inode.decLinksLocked(ctx)
+	}
 	return nil
 }
 

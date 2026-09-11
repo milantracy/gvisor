@@ -1036,14 +1036,10 @@ type inode struct {
 
 	locks vfs.FileLocks
 
-	// Inotify watches for this inode.
-	//
-	// Note that inotify may behave unexpectedly in the presence of hard links,
-	// because dentries corresponding to the same file have separate inotify
-	// watches when they should share the same set. This is the case because it is
-	// impossible for us to know for sure whether two dentries correspond to the
-	// same underlying file (see the gofer filesystem section fo vfs/inotify.md for
-	// a more in-depth discussion on this matter).
+	// Inotify watches for this inode, shared by all the dentries that are hard
+	// links to the same file. Each watch keeps only its target dentry alive.
+	// Hard links the sentry cannot detect as such get separate sets; see the
+	// gofer filesystem section of vfs/inotify.md.
 	watches vfs.Watches
 
 	// refs is the reference count of the inode. A dentry holds a reference on the inode
@@ -1760,7 +1756,10 @@ func (d *dentry) checkCachingLocked(ctx context.Context, renameMuWriteLocked boo
 				return
 			}
 		}
-		if d.isDeleted() {
+		// Drop watches only once the file's last link is gone; otherwise they
+		// stay on the shared set, still reachable through another dentry.
+		// Directories and inodes without a link count always count as gone.
+		if d.isDeleted() && (d.isDir() || d.inode.nlink.Load() == 0) {
 			d.inode.watches.HandleDeletion(ctx)
 		}
 		d.destroyLocked(ctx) // +checklocksforce: renameMu must be acquired at this point.
@@ -1776,12 +1775,9 @@ func (d *dentry) checkCachingLocked(ctx context.Context, renameMuWriteLocked boo
 		d.evict(ctx)
 		return
 	}
-	// If d still has inotify watches and it is not deleted or invalidated, it
-	// can't be evicted. Otherwise, we will lose its watches, even if a new
-	// dentry is created for the same file in the future. Note that the size of
-	// d.inode.watches cannot concurrently transition from zero to non-zero, because
-	// adding a watch requires holding a reference on d.
-	if d.inode.watches.Size() > 0 {
+	// Dentries that are inotify watch targets are not cached, so that they are
+	// never evicted. Hard link aliases of d are left cacheable.
+	if d.inode.watches.HasTarget(&d.vfsd) {
 		// As in the refs > 0 case, removing d is beneficial.
 		d.removeFromCacheLocked()
 		d.cachingMu.Unlock()
@@ -1897,9 +1893,9 @@ func (d *dentry) evict(ctx context.Context) {
 func (d *dentry) evictLocked(ctx context.Context) {
 	d.cachingMu.Lock()
 	d.removeFromCacheLocked()
-	// d.refs or d.inode.watches.Size() may have become non-zero from an earlier path
-	// resolution since it was inserted into fs.dentryCache.dentries.
-	if d.refs.Load() != 0 || d.inode.watches.Size() != 0 {
+	// d.refs may have become non-zero, or d may have become a watch target,
+	// since it was inserted into fs.dentryCache.dentries.
+	if d.refs.Load() != 0 || d.inode.watches.HasTarget(&d.vfsd) {
 		d.cachingMu.Unlock()
 		return
 	}

@@ -1426,6 +1426,11 @@ func (fs *filesystem) RenameAt(ctx context.Context, rp *vfs.ResolvingPath, oldPa
 	}
 
 	vfs.InotifyRename(ctx, &renamed.watches, &oldParent.watches, &newParent.watches, oldName, newName, renamed.isDir())
+	if replaced != nil {
+		// Ordered between the parents' IN_MOVED_FROM/IN_MOVED_TO and replaced's
+		// IN_DELETE_SELF/IN_IGNORED.
+		replaced.watches.Notify(ctx, "", linux.IN_ATTRIB, 0, vfs.InodeEvent, true /* unlinked */)
+	}
 	return nil
 }
 
