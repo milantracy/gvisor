@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -317,6 +318,17 @@ type Sandbox struct {
 	runscPath string
 	rootState string
 
+	// globalArgs are the global runsc flags the sandbox was created with.
+	globalArgs []string
+
+	// spec is the spec of the containers that Exec starts, without their
+	// process arguments.
+	spec *specs.Spec
+
+	// rootfsTar is the rootfs upper layer tar that each container starts
+	// from, if the sandbox was restored from a RootfsTarSnapshot.
+	rootfsTar string
+
 	// ownStateDir means Close should remove rootState.
 	ownStateDir bool
 
@@ -374,16 +386,15 @@ func newOptions(opts ...Option) (*Options, error) {
 }
 
 // toBundleConfig converts the resolved options into a bundleConfig.
-func (o *Options) toBundleConfig(annotations map[string]string) bundleConfig {
+func (o *Options) toBundleConfig() bundleConfig {
 	return bundleConfig{
-		ID:          o.id,
-		RuntimeDir:  o.runtimeDir,
-		Network:     o.network,
-		Mounts:      o.mounts,
-		Env:         o.env,
-		Annotations: annotations,
-		WorkingDir:  o.workingDir,
-		Hostname:    o.hostname,
+		ID:         o.id,
+		RuntimeDir: o.runtimeDir,
+		Network:    o.network,
+		Mounts:     o.mounts,
+		Env:        o.env,
+		WorkingDir: o.workingDir,
+		Hostname:   o.hostname,
 
 		RootPath:     o.rootPath,
 		RootReadonly: o.rootReadonly,
@@ -440,29 +451,15 @@ func readFileTrimmed(f *os.File) string {
 	return strings.TrimSpace(string(out))
 }
 
-// relaySignals forwards this process's signals to the command whose PID runsc
-// writes to pidFile, and returns a function that stops the relay.
-func (s *Sandbox) relaySignals(ctx context.Context, pidFile string) func() {
+// relaySignals forwards this process's signals to the container cid, and
+// returns a function that stops the relay.
+func (s *Sandbox) relaySignals(ctx context.Context, cid string) func() {
 	return sighandling.StartSignalForwarding(func(sig linux.Signal) {
-		pid, err := readPidFile(pidFile)
-		if err != nil {
-			// The command is not running yet; drop the signal.
-			return
-		}
-		killArgs := []string{"--root", s.rootState, "kill", "--pid", strconv.Itoa(pid), s.id, strconv.Itoa(int(sig))}
+		killArgs := []string{"--root", s.rootState, "kill", cid, strconv.Itoa(int(sig))}
 		if err := exec.CommandContext(ctx, s.runscPath, killArgs...).Run(); err != nil {
-			log.Warningf("failed to forward signal %d to sandbox %s: %v", sig, s.id, err)
+			log.Warningf("failed to forward signal %d to container %s: %v", sig, cid, err)
 		}
 	})
-}
-
-// readPidFile returns the PID runsc wrote to path.
-func readPidFile(path string) (int, error) {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return 0, err
-	}
-	return strconv.Atoi(strings.TrimSpace(string(b)))
 }
 
 // New creates a new sandbox.
@@ -481,11 +478,14 @@ func New(ctx context.Context, opts ...Option) (*Sandbox, error) {
 		options.runtimeDir = dir
 	}
 
-	var stateDir, bundleDir string
+	var stateDir, bundleDir, rootfsTar string
 	var ownStateDir, created bool
 	defer func() {
 		if created {
 			return
+		}
+		if rootfsTar != "" {
+			os.Remove(rootfsTar)
 		}
 		if bundleDir != "" {
 			os.RemoveAll(bundleDir)
@@ -522,7 +522,6 @@ func New(ctx context.Context, opts ...Option) (*Sandbox, error) {
 		}
 	}
 
-	var annotations map[string]string
 	var globalFlags []string
 	var runFlags []string
 	var isCheckpointRestore bool
@@ -550,14 +549,9 @@ func New(ctx context.Context, opts ...Option) (*Sandbox, error) {
 		// Perform restore based on type.
 		switch meta.Type {
 		case RootfsTarSnapshot:
-			tarPath, err := readRootfsTar(ctx, snapshotID, store)
+			rootfsTar, err = readRootfsTar(ctx, snapshotID, store)
 			if err != nil {
 				return nil, err
-			}
-			defer os.Remove(tarPath)
-
-			annotations = map[string]string{
-				"dev.gvisor.tar.rootfs.upper": tarPath,
 			}
 			globalFlags = append(globalFlags, "--allow-rootfs-tar-annotation")
 
@@ -579,10 +573,16 @@ func New(ctx context.Context, opts ...Option) (*Sandbox, error) {
 		}
 	}
 	options.stateDir = stateDir
-	bundleDir, err = newBundle(options.toBundleConfig(annotations))
+	var spec *specs.Spec
+	bundleDir, spec, err = newBundle(options.toBundleConfig())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create OCI bundle: %v", err)
 	}
+
+	// All containers share the rootfs directory. The default "self" overlay
+	// medium keeps the upper layer in a file there whose name is the same for
+	// every container, so concurrent Exec calls would collide on it.
+	globalFlags = append(globalFlags, "--overlay2=root:dir="+bundleDir)
 
 	runscBin, err := resolveRunscPath()
 	if err != nil {
@@ -593,18 +593,21 @@ func New(ctx context.Context, opts ...Option) (*Sandbox, error) {
 		bundleDir:     bundleDir,
 		runscPath:     runscBin,
 		rootState:     stateDir,
+		globalArgs:    append(options.runscGlobalArgs(), globalFlags...),
+		spec:          spec,
+		rootfsTar:     rootfsTar,
 		ownStateDir:   ownStateDir,
 		runtimeDir:    options.runtimeDir,
 		ownRuntimeDir: ownRuntimeDir,
 	}
 
-	// Launch the sandbox in detached mode via os/exec.
-	args := append(options.runscGlobalArgs(), globalFlags...)
-
+	// Launch the sandbox in detached mode via os/exec. It has no root
+	// container; each Exec runs its command in a new container.
+	args := slices.Clone(sb.globalArgs)
 	if isCheckpointRestore {
-		args = append(args, "restore", "--image-path", checkpointRestoreDir, "--detach", sb.id)
+		args = append(args, "restore", "--no-root-container", "--bundle", sb.bundleDir, "--image-path", checkpointRestoreDir, "--detach", sb.id)
 	} else {
-		args = append(args, "run")
+		args = append(args, "run", "--no-root-container")
 		args = append(args, runFlags...)
 		args = append(args, "--bundle", sb.bundleDir, "--detach", sb.id)
 	}
@@ -681,9 +684,12 @@ type ExecResult struct {
 // Exec runs a command inside the sandbox and waits for it to exit. A non-zero
 // exit is reported in the ExecResult; an error means the command did not run.
 //
-// The command inherits the working directory, environment, user and
-// capabilities the sandbox was created with. Calls may run concurrently, unless
-// WithExecSignalRelay asks for the signal relay.
+// Each call runs the command in a new container with the working directory,
+// environment, user, capabilities and mounts the sandbox was created with.
+// Changes to the root filesystem do not carry over to later calls, but changes
+// to bind and tmpfs mounts do. Processes the command leaves behind are killed
+// when it exits. Calls may run concurrently, unless WithExecSignalRelay asks
+// for the signal relay.
 func (s *Sandbox) Exec(ctx context.Context, argv []string, opts ...ExecOption) (*ExecResult, error) {
 	options := &execOptions{args: argv}
 	for _, o := range opts {
@@ -698,17 +704,34 @@ func (s *Sandbox) Exec(ctx context.Context, argv []string, opts ...ExecOption) (
 		defer s.execMu.RUnlock()
 	}
 
-	args := []string{"--root", s.rootState, "exec"}
-	var pidFile string
-	if options.relaySignals {
-		pidFile = filepath.Join(s.bundleDir, "exec-"+newID()+".pid")
-		defer os.Remove(pidFile)
-		args = append(args, "--internal-pid-file", pidFile)
+	cid := "exec-" + newID()
+	bundleDir := filepath.Join(s.bundleDir, cid)
+	if err := os.Mkdir(bundleDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create container bundle directory: %v", err)
 	}
+	defer os.RemoveAll(bundleDir)
+
+	spec := *s.spec
+	process := *spec.Process
+	process.Args = options.args
+	spec.Process = &process
+	spec.Annotations = map[string]string{
+		specutils.ContainerdContainerTypeAnnotation: specutils.ContainerdContainerTypeContainer,
+		specutils.ContainerdSandboxIDAnnotation:     s.id,
+	}
+	if s.rootfsTar != "" {
+		spec.Annotations[specutils.ContainerdContainerNameAnnotation] = cid
+		spec.Annotations[specutils.AnnotationRootfsUpperTar+"."+cid] = s.rootfsTar
+	}
+	if err := writeSpec(bundleDir, &spec); err != nil {
+		return nil, err
+	}
+
+	args := append(slices.Clone(s.globalArgs), "run")
 	if options.execPath != "" {
 		args = append(args, "--exec-path", options.execPath)
 	}
-	args = append(append(args, s.id), options.args...)
+	args = append(args, "--bundle", bundleDir, cid)
 	cmd := exec.CommandContext(ctx, s.runscPath, args...)
 	cmd.Stdin = options.stdin
 	var stdout, stderr bytes.Buffer
@@ -722,8 +745,16 @@ func (s *Sandbox) Exec(ctx context.Context, argv []string, opts ...ExecOption) (
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start command in sandbox: %v", err)
 	}
+	// The container outlives runsc if ctx kills runsc, so delete it with a
+	// context that is not cancelled.
+	defer func() {
+		deleteArgs := []string{"--root", s.rootState, "delete", "--force", cid}
+		if err := exec.CommandContext(context.WithoutCancel(ctx), s.runscPath, deleteArgs...).Run(); err != nil {
+			log.Warningf("failed to delete container %s: %v", cid, err)
+		}
+	}()
 	if options.relaySignals {
-		stopRelay := s.relaySignals(ctx, pidFile)
+		stopRelay := s.relaySignals(ctx, cid)
 		defer stopRelay()
 	}
 
@@ -746,13 +777,16 @@ func (s *Sandbox) Exec(ctx context.Context, argv []string, opts ...ExecOption) (
 
 // Close kills the sandbox processes and cleans up after it.
 func (s *Sandbox) Close(ctx context.Context) error {
-	killArgs := []string{"--root", s.rootState, "kill", s.id, "SIGKILL"}
-	_ = exec.CommandContext(ctx, s.runscPath, killArgs...).Run()
-
 	var errs []error
 	deleteArgs := []string{"--root", s.rootState, "delete", "--force", s.id}
 	if err := exec.CommandContext(ctx, s.runscPath, deleteArgs...).Run(); err != nil {
 		errs = append(errs, fmt.Errorf("failed to clean up sandbox state: %v", err))
+	}
+
+	if s.rootfsTar != "" {
+		if err := os.Remove(s.rootfsTar); err != nil {
+			errs = append(errs, fmt.Errorf("failed to clean up rootfs tar: %v", err))
+		}
 	}
 
 	if err := os.RemoveAll(s.bundleDir); err != nil {
@@ -818,9 +852,7 @@ func (s *Sandbox) Snapshot(ctx context.Context, snapshotType SnapshotType, stora
 
 	switch snapshotType {
 	case RootfsTarSnapshot:
-		if err := s.snapshotRootfsTar(ctx, snapshotID, storage); err != nil {
-			return nil, err
-		}
+		return nil, fmt.Errorf("rootfs tar snapshots are not supported: the root filesystem does not persist between Exec calls")
 
 	case FilesystemSnapshot:
 		// TODO: Run `runsc fscheckpoint --image-path=<localTempDir> [--leave-running] <sandboxID>`.
@@ -850,40 +882,6 @@ func (s *Sandbox) Snapshot(ctx context.Context, snapshotType SnapshotType, stora
 		ID:      snapshotID,
 		Storage: storage,
 	}, nil
-}
-
-func (s *Sandbox) snapshotRootfsTar(ctx context.Context, snapshotID SnapshotID, storage SnapshotStorage) error {
-	tarFile, err := os.CreateTemp(os.TempDir(), "rootfs-*.tar")
-	if err != nil {
-		return fmt.Errorf("failed to create temp tar file: %w", err)
-	}
-	tarPath := tarFile.Name()
-	tarFile.Close()
-	defer os.Remove(tarPath)
-
-	cmd := exec.CommandContext(ctx, s.runscPath, "--root", s.rootState, "tar", "rootfs-upper", "--file", tarPath, s.id)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("runsc tar failed: %v (stderr: %q)", err, stderr.String())
-	}
-
-	localFile, err := os.Open(tarPath)
-	if err != nil {
-		return fmt.Errorf("failed to open temp tar file: %w", err)
-	}
-	defer localFile.Close()
-
-	storageWriter, err := storage.PutWriter(ctx, snapshotID, RootfsAsset)
-	if err != nil {
-		return fmt.Errorf("failed to create storage writer: %w", err)
-	}
-	defer storageWriter.Close()
-
-	if _, err := io.Copy(storageWriter, localFile); err != nil {
-		return fmt.Errorf("failed to upload rootfs tar: %w", err)
-	}
-	return nil
 }
 
 func readRootfsTar(ctx context.Context, snapshotID SnapshotID, store SnapshotStorage) (string, error) {

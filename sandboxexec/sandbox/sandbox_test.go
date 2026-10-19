@@ -15,10 +15,14 @@
 package sandbox_test
 
 import (
+	"archive/tar"
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"gvisor.dev/gvisor/pkg/test/testutil"
@@ -292,50 +296,160 @@ func TestSandboxInvalidEnvFormat(t *testing.T) {
 	}
 }
 
-func TestRootfsTarSnapshot(t *testing.T) {
-	ctx := context.Background()
-	tempDir := t.TempDir()
-
-	storageDir := filepath.Join(tempDir, "storage")
-	if err := os.MkdirAll(storageDir, 0700); err != nil {
-		t.Fatalf("failed to create storage dir: %v", err)
-	}
-	storage, err := sandbox.NewFilesystemStorage(storageDir)
+// writeRootfsTarSnapshot stores a RootfsTarSnapshot that holds one file, and
+// returns it.
+func writeRootfsTarSnapshot(ctx context.Context, t *testing.T, name, content string) *sandbox.Snapshot {
+	t.Helper()
+	storage, err := sandbox.NewFilesystemStorage(t.TempDir())
 	if err != nil {
 		t.Fatalf("failed to create storage: %v", err)
 	}
+	snapshot := &sandbox.Snapshot{ID: "rootfs-snapshot", Storage: storage}
 
-	runtimeDirA := filepath.Join(tempDir, "runtime-a")
-	sbA, err := sandbox.New(ctx,
-		sandbox.WithRuntimeDir(runtimeDirA),
-		sandbox.WithNetwork(sandbox.NetworkModeNone),
-	)
+	tarWriter, err := storage.PutWriter(ctx, snapshot.ID, sandbox.RootfsAsset)
 	if err != nil {
-		t.Fatalf("failed to start sandbox A: %v", err)
+		t.Fatalf("failed to create rootfs asset: %v", err)
 	}
-	defer sbA.Close(ctx)
+	// The rootfs tar names the root directory "./" and holds paths below it.
+	tw := tar.NewWriter(tarWriter)
+	if err := tw.WriteHeader(&tar.Header{Name: "./", Typeflag: tar.TypeDir, Mode: 0755}); err != nil {
+		t.Fatalf("failed to write tar header: %v", err)
+	}
+	if err := tw.WriteHeader(&tar.Header{Name: "./" + name, Mode: 0644, Size: int64(len(content))}); err != nil {
+		t.Fatalf("failed to write tar header: %v", err)
+	}
+	if _, err := tw.Write([]byte(content)); err != nil {
+		t.Fatalf("failed to write tar content: %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("failed to close tar: %v", err)
+	}
+	if err := tarWriter.Close(); err != nil {
+		t.Fatalf("failed to close rootfs asset: %v", err)
+	}
 
-	execOutput(ctx, t, sbA, "sh", "-c", "echo 'hello' > /test.txt")
-
-	snapshot, err := sbA.Snapshot(ctx, sandbox.RootfsTarSnapshot, storage)
+	metaWriter, err := storage.PutWriter(ctx, snapshot.ID, sandbox.MetadataAsset)
 	if err != nil {
-		t.Fatalf("failed to take snapshot: %v", err)
+		t.Fatalf("failed to create metadata asset: %v", err)
 	}
+	if err := json.NewEncoder(metaWriter).Encode(sandbox.SnapshotMetadata{Type: sandbox.RootfsTarSnapshot}); err != nil {
+		t.Fatalf("failed to write metadata: %v", err)
+	}
+	if err := metaWriter.Close(); err != nil {
+		t.Fatalf("failed to close metadata asset: %v", err)
+	}
+	return snapshot
+}
 
-	runtimeDirB := filepath.Join(tempDir, "runtime-b")
-	sbB, err := sandbox.New(ctx,
-		sandbox.WithRuntimeDir(runtimeDirB),
+func TestRootfsTarSnapshotRestore(t *testing.T) {
+	ctx := context.Background()
+	snapshot := writeRootfsTarSnapshot(ctx, t, "test.txt", "hello\n")
+
+	sb, err := sandbox.New(ctx,
 		sandbox.WithNetwork(sandbox.NetworkModeNone),
 		sandbox.WithSnapshot(snapshot),
 	)
 	if err != nil {
-		t.Fatalf("failed to start sandbox B: %v", err)
+		t.Fatalf("failed to start sandbox: %v", err)
 	}
-	defer sbB.Close(ctx)
+	defer sb.Close(ctx)
 
-	outB := execOutput(ctx, t, sbB, "cat", "/test.txt")
-	if strings.TrimSpace(outB) != "hello" {
-		t.Errorf("unexpected content in B: got %q, want %q", outB, "hello")
+	// Every Exec starts from the restored rootfs, so a change made by one
+	// Exec does not hide the file from the next.
+	execOutput(ctx, t, sb, "rm", "/test.txt")
+	if got := execOutput(ctx, t, sb, "cat", "/test.txt"); strings.TrimSpace(got) != "hello" {
+		t.Errorf("cat /test.txt = %q, want %q", got, "hello")
+	}
+}
+
+func TestRootfsTarSnapshotUnsupported(t *testing.T) {
+	ctx := context.Background()
+	storage, err := sandbox.NewFilesystemStorage(t.TempDir())
+	if err != nil {
+		t.Fatalf("failed to create storage: %v", err)
+	}
+
+	sb, err := sandbox.New(ctx, sandbox.WithNetwork(sandbox.NetworkModeNone))
+	if err != nil {
+		t.Fatalf("failed to start sandbox: %v", err)
+	}
+	defer sb.Close(ctx)
+
+	if _, err := sb.Snapshot(ctx, sandbox.RootfsTarSnapshot, storage); err == nil {
+		t.Errorf("Snapshot(RootfsTarSnapshot) succeeded, want error")
+	}
+}
+
+func TestExecRootfsNotShared(t *testing.T) {
+	ctx := context.Background()
+
+	sb, err := sandbox.New(ctx, sandbox.WithNetwork(sandbox.NetworkModeNone))
+	if err != nil {
+		t.Fatalf("failed to start sandbox: %v", err)
+	}
+	defer sb.Close(ctx)
+
+	execOutput(ctx, t, sb, "sh", "-c", "echo hello > /test.txt")
+	res, err := sb.Exec(ctx, []string{"cat", "/test.txt"})
+	if err != nil {
+		t.Fatalf("failed to execute cat in sandbox: %v", err)
+	}
+	if res.ExitCode == 0 {
+		t.Errorf("cat /test.txt succeeded with %q, want the file to be gone", res.Stdout)
+	}
+}
+
+func TestExecPath(t *testing.T) {
+	ctx := context.Background()
+
+	sb, err := sandbox.New(ctx, sandbox.WithNetwork(sandbox.NetworkModeNone))
+	if err != nil {
+		t.Fatalf("failed to start sandbox: %v", err)
+	}
+	defer sb.Close(ctx)
+
+	res, err := sb.Exec(ctx, []string{"custom-sh", "-c", "echo $0"}, sandbox.WithExecPath("/bin/sh"))
+	if err != nil {
+		t.Fatalf("failed to execute sh in sandbox: %v", err)
+	}
+	if got := strings.TrimSpace(res.Stdout); res.ExitCode != 0 || got != "custom-sh" {
+		t.Errorf("Exec = (%d, %q), want (0, %q); stderr: %s", res.ExitCode, got, "custom-sh", res.Stderr)
+	}
+}
+
+func TestExecConcurrent(t *testing.T) {
+	ctx := context.Background()
+
+	sb, err := sandbox.New(ctx, sandbox.WithNetwork(sandbox.NetworkModeNone))
+	if err != nil {
+		t.Fatalf("failed to start sandbox: %v", err)
+	}
+	defer sb.Close(ctx)
+
+	const n = 4
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := range n {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			want := fmt.Sprintf("exec-%d", i)
+			res, err := sb.Exec(ctx, []string{"sh", "-c", fmt.Sprintf("echo %s > /out; sleep 1; cat /out", want)})
+			switch {
+			case err != nil:
+				errs[i] = err
+			case res.ExitCode != 0:
+				errs[i] = fmt.Errorf("exited with %d, stderr: %s", res.ExitCode, res.Stderr)
+			case strings.TrimSpace(res.Stdout) != want:
+				errs[i] = fmt.Errorf("got %q, want %q", res.Stdout, want)
+			}
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("Exec %d: %v", i, err)
+		}
 	}
 }
 
@@ -370,15 +484,9 @@ func TestSandboxWorkingDir(t *testing.T) {
 	}
 	defer sb.Close(ctx)
 
-	configPath := filepath.Join(sb.Bundle(), "config.json")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("failed to read config.json: %v", err)
-	}
-
-	// Because of relative dir sanitization, it should be /tmp/custom
-	if !strings.Contains(string(data), `cwd": "/tmp/custom"`) {
-		t.Errorf("config.json does not contain custom working directory. got: %s", string(data))
+	// Because of relative dir sanitization, it should be /tmp/custom.
+	if got := strings.TrimSpace(execOutput(ctx, t, sb, "pwd")); got != "/tmp/custom" {
+		t.Errorf("pwd = %q, want %q", got, "/tmp/custom")
 	}
 }
 

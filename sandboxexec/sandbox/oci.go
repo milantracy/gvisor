@@ -20,13 +20,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
-
-// defaultInitArgs is the placeholder init that keeps the sandbox alive for
-// Exec calls.
-var defaultInitArgs = []string{"/bin/sleep", "infinity"}
 
 // baseEnv is prepended to the process environment unless SkipBaseEnv is set.
 var baseEnv = []string{"PATH=/bin:/usr/bin:/usr/local/bin"}
@@ -38,14 +35,13 @@ const defaultRootfsDir = "rootfs"
 // bundleConfig holds configuration for creating an OCI bundle. The zero value
 // of every field reproduces the default sandbox layout.
 type bundleConfig struct {
-	ID          string
-	RuntimeDir  string
-	Network     NetworkMode
-	Mounts      []Mount
-	Env         []string
-	Annotations map[string]string
-	WorkingDir  string
-	Hostname    string
+	ID         string
+	RuntimeDir string
+	Network    NetworkMode
+	Mounts     []Mount
+	Env        []string
+	WorkingDir string
+	Hostname   string
 
 	// RootPath is the container's root filesystem.
 	RootPath string
@@ -141,7 +137,15 @@ func (m Mount) ociMount() (specs.Mount, error) {
 	}, nil
 }
 
-// newSpec builds the OCI runtime specification described by cfg.
+// sharedTmpfsSource returns the mount source of the i-th entry of
+// bundleConfig.Mounts when it is a tmpfs. The sandbox spec names this source
+// in a mount hint, so that every container shares one tmpfs instance.
+func sharedTmpfsSource(i int) string {
+	return fmt.Sprintf("/sandbox-tmpfs-%d", i)
+}
+
+// newSpec builds the OCI runtime specification of the containers that Exec
+// starts, without the process arguments. newBundle adjusts it before use.
 func newSpec(cfg bundleConfig) (*specs.Spec, error) {
 	// Without an explicit root, the container gets an empty root filesystem.
 	rootPath := cfg.RootPath
@@ -172,15 +176,13 @@ func newSpec(cfg bundleConfig) (*specs.Spec, error) {
 	}
 
 	spec := &specs.Spec{
-		Version:     "1.0.0",
-		Annotations: cfg.Annotations,
+		Version: "1.0.0",
 		Root: &specs.Root{
 			Path:     rootPath,
 			Readonly: cfg.RootReadonly,
 		},
 		Process: &specs.Process{
 			User:         user,
-			Args:         defaultInitArgs,
 			Cwd:          cfg.WorkingDir,
 			Capabilities: cfg.Capabilities,
 		},
@@ -249,12 +251,47 @@ func newSpec(cfg bundleConfig) (*specs.Spec, error) {
 	return spec, nil
 }
 
-// newBundle creates an OCI bundle on the fly with the given configuration and
-// returns its directory.
-func newBundle(cfg bundleConfig) (string, error) {
+// newSandboxSpec builds the OCI runtime specification of the sandbox itself.
+// The sandbox has no root container, so the spec has no process and no root.
+// Its mount hints make each tmpfs in cfg.Mounts one instance that all the
+// containers share.
+func newSandboxSpec(cfg bundleConfig, containerSpec *specs.Spec) (*specs.Spec, error) {
+	annotations := make(map[string]string)
+	for i, m := range cfg.Mounts {
+		if m.Type != MountTypeTmpfs {
+			continue
+		}
+		om, err := m.ociMount()
+		if err != nil {
+			return nil, err
+		}
+		prefix := fmt.Sprintf("dev.gvisor.spec.mount.tmpfs%d.", i)
+		annotations[prefix+"source"] = sharedTmpfsSource(i)
+		annotations[prefix+"type"] = "tmpfs"
+		annotations[prefix+"share"] = "pod"
+		if len(om.Options) > 0 {
+			annotations[prefix+"options"] = strings.Join(om.Options, ",")
+		}
+	}
+	return &specs.Spec{
+		Version:     "1.0.0",
+		Annotations: annotations,
+		Hostname:    cfg.Hostname,
+		Linux:       containerSpec.Linux,
+	}, nil
+}
+
+// newBundle creates the sandbox's OCI bundle on the fly with the given
+// configuration. It returns the bundle directory and the spec of the
+// containers that Exec starts, whose root path is absolute.
+func newBundle(cfg bundleConfig) (string, *specs.Spec, error) {
 	spec, err := newSpec(cfg)
 	if err != nil {
-		return "", err
+		return "", nil, err
+	}
+	sandboxSpec, err := newSandboxSpec(cfg, spec)
+	if err != nil {
+		return "", nil, err
 	}
 
 	bundleDir := filepath.Join(cfg.RuntimeDir, cfg.ID)
@@ -263,22 +300,46 @@ func newBundle(cfg bundleConfig) (string, error) {
 		createDir = filepath.Join(bundleDir, defaultRootfsDir)
 	}
 	if err := os.MkdirAll(createDir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create bundle directories: %w", err)
+		return "", nil, fmt.Errorf("failed to create bundle directories: %w", err)
+	}
+	// Each container has its own bundle directory, so relative host paths
+	// must be resolved against the sandbox's.
+	if !filepath.IsAbs(spec.Root.Path) {
+		spec.Root.Path = filepath.Join(bundleDir, spec.Root.Path)
+	}
+	for i := range spec.Mounts {
+		if m := &spec.Mounts[i]; m.Type == "bind" && !filepath.IsAbs(m.Source) {
+			m.Source = filepath.Join(bundleDir, m.Source)
+		}
+	}
+	// cfg.Mounts come last in spec.Mounts. Point each tmpfs among them at the
+	// source the sandbox spec shares.
+	customMounts := spec.Mounts[len(spec.Mounts)-len(cfg.Mounts):]
+	for i, m := range cfg.Mounts {
+		if m.Type == MountTypeTmpfs {
+			customMounts[i].Source = sharedTmpfsSource(i)
+		}
 	}
 
-	// Write the spec to config.json
-	configPath := filepath.Join(bundleDir, "config.json")
+	if err := writeSpec(bundleDir, sandboxSpec); err != nil {
+		return "", nil, err
+	}
+	return bundleDir, spec, nil
+}
+
+// writeSpec writes spec to config.json in dir.
+func writeSpec(dir string, spec *specs.Spec) error {
+	configPath := filepath.Join(dir, "config.json")
 	configFile, err := os.Create(configPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to create config.json: %w", err)
+		return fmt.Errorf("failed to create config.json: %w", err)
 	}
 	defer configFile.Close()
 
 	encoder := json.NewEncoder(configFile)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(spec); err != nil {
-		return "", fmt.Errorf("failed to encode config.json: %w", err)
+		return fmt.Errorf("failed to encode config.json: %w", err)
 	}
-
-	return bundleDir, nil
+	return nil
 }

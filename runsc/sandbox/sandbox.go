@@ -506,8 +506,9 @@ func (s *Sandbox) StartRoot(conf *config.Config, spec *specs.Spec) error {
 	return nil
 }
 
-// StartSubcontainer starts running a sub-container inside the sandbox.
-func (s *Sandbox) StartSubcontainer(spec *specs.Spec, conf *config.Config, cid string, stdios, goferFiles, goferFilestores []*os.File, devIOFile *os.File, goferConfs []specutils.GoferMountConf) error {
+// StartSubcontainer starts running a sub-container inside the sandbox. If
+// execPath is set, it names the program to run instead of argv[0].
+func (s *Sandbox) StartSubcontainer(spec *specs.Spec, conf *config.Config, cid, execPath string, stdios, goferFiles, goferFilestores []*os.File, devIOFile *os.File, goferConfs []specutils.GoferMountConf) error {
 	log.Debugf("Start sub-container %q in sandbox %q, PID: %d", cid, s.ID, s.Pid.Load())
 
 	if err := s.configureStdios(conf, stdios); err != nil {
@@ -549,6 +550,7 @@ func (s *Sandbox) StartSubcontainer(spec *specs.Spec, conf *config.Config, cid s
 		Spec:                        spec,
 		Conf:                        conf,
 		CID:                         cid,
+		ExecPath:                    execPath,
 		NumGoferFilestoreFDs:        len(goferFilestores),
 		IsDevIoFilePresent:          devIOFile != nil,
 		GoferMountConfs:             goferConfs,

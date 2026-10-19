@@ -320,6 +320,87 @@ func TestNoRootContainerWithoutAnnotations(t *testing.T) {
 	}
 }
 
+// TestMultiContainerExecPath checks that Args.ExecPath names the program a
+// subcontainer runs, so that argv[0] can differ from it.
+func TestMultiContainerExecPath(t *testing.T) {
+	conf := testutil.TestConfig(t)
+	setupTestRootDir(t, conf)
+
+	// The shell exits 0 only if it was given custom-sh as argv[0].
+	specs, ids := createSpecs(sleepCmd, []string{"custom-sh", "-c", `[ "$0" = custom-sh ]`})
+	containers, cleanup, err := startContainersWithArgs(conf, specs, ids, func(i int, args *Args) {
+		if i == 1 {
+			args.ExecPath = "/bin/sh"
+		}
+	})
+	if err != nil {
+		t.Fatalf("error starting containers: %v", err)
+	}
+	defer cleanup()
+
+	ws, err := containers[1].Wait()
+	if err != nil {
+		t.Fatalf("error waiting for container: %v", err)
+	}
+	if ws.ExitStatus() != 0 {
+		t.Errorf("got exit status %d, want 0", ws.ExitStatus())
+	}
+
+	// The root container's process is not created by StartSubcontainer.
+	rootSpecs, rootIDs := createSpecs(sleepCmd)
+	if _, _, err := startContainersWithArgs(conf, rootSpecs, rootIDs, func(_ int, args *Args) {
+		args.ExecPath = "/bin/sleep"
+	}); err == nil {
+		t.Errorf("creating a root container with ExecPath succeeded, want error")
+	}
+}
+
+// TestMultiContainerFailedStartReleasesStdio checks that a subcontainer that
+// fails to start does not keep its stdio open in the sandbox. Otherwise, a
+// caller reading the container's output never sees EOF.
+func TestMultiContainerFailedStartReleasesStdio(t *testing.T) {
+	conf := testutil.TestConfig(t)
+	setupTestRootDir(t, conf)
+
+	specs, ids := createSpecs(sleepCmd, []string{"/no/such/binary"})
+	_, cleanup, err := startContainers(conf, specs[:1], ids[:1])
+	if err != nil {
+		t.Fatalf("error starting root container: %v", err)
+	}
+	defer cleanup()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("error creating pipe: %v", err)
+	}
+	defer r.Close()
+
+	// Start passes os.Stdout to the subcontainer.
+	stdout := os.Stdout
+	os.Stdout = w
+	_, cleanupSub, err := startContainers(conf, specs[1:], ids[1:])
+	os.Stdout = stdout
+	w.Close()
+	if err == nil {
+		cleanupSub()
+		t.Fatalf("starting a container with a missing binary succeeded, want error")
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := io.ReadAll(r)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("error reading stdout: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Errorf("stdout is still open in the sandbox after the failed start")
+	}
+}
+
 // TestNoRootContainerSignal checks that signaling a sandbox is refused up
 // front and leaves it running.
 func TestNoRootContainerSignal(t *testing.T) {

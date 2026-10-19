@@ -1517,7 +1517,7 @@ func (l *Loader) createSubcontainer(cid string, tty *fd.FD) error {
 // for the caller to close any remaining files upon return.
 //
 // +checklocksexclude:l.mu
-func (l *Loader) startSubcontainer(spec *specs.Spec, conf *config.Config, cid string, stdioFDs, goferFDs, goferFilestoreFDs []*fd.FD, devGoferFD *fd.FD, goferMountConfs []specutils.GoferMountConf, rootfsUpperTarFD *fd.FD) error {
+func (l *Loader) startSubcontainer(spec *specs.Spec, conf *config.Config, cid, execPath string, stdioFDs, goferFDs, goferFilestoreFDs []*fd.FD, devGoferFD *fd.FD, goferMountConfs []specutils.GoferMountConf, rootfsUpperTarFD *fd.FD) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -1593,6 +1593,7 @@ func (l *Loader) startSubcontainer(spec *specs.Spec, conf *config.Config, cid st
 	if err != nil {
 		return fmt.Errorf("creating new process: %w", err)
 	}
+	info.procArgs.Filename = execPath
 
 	// Use stdios or TTY depending on the spec configuration.
 	if spec.Process.Terminal {
@@ -1658,7 +1659,9 @@ func (l *Loader) createContainerProcess(info *containerInfo) (*kernel.ThreadGrou
 	}
 	info.procArgs.StartupTimeline.Reached("FD table created")
 	// CreateProcess takes a reference on fdTable if successful. We won't need
-	// ours either way.
+	// ours either way. Dropping it on failure closes the host stdio FDs, so
+	// the caller sees EOF on them.
+	defer fdTable.DecRef(ctx)
 	info.procArgs.FDTable = fdTable
 
 	if ttyFile != nil {
@@ -1740,8 +1743,6 @@ func (l *Loader) createContainerProcess(info *containerInfo) (*kernel.ThreadGrou
 	if err != nil {
 		return nil, nil, fmt.Errorf("creating process: %w", err)
 	}
-	// CreateProcess takes a reference on FDTable if successful.
-	info.procArgs.FDTable.DecRef(ctx)
 
 	// Install seccomp filters with the new task if there are any.
 	program, err := buildOCISeccompProgram(info.conf, info.spec)

@@ -36,8 +36,6 @@ Go binding features:
     mounts (`/output`), and ephemeral scratch spaces (`/tmp`).
 *   **Default Network Isolation**: `NetworkModeNone` prevents untrusted data
     from exfiltrating over the network.
-*   **Snapshot Pre-Warming**: Saves initialized rootfs states with
-    `RootfsTarSnapshot` and restores them instantly using `WithSnapshot`.
 
 --------------------------------------------------------------------------------
 
@@ -144,25 +142,4 @@ timeout:
 ```bash
 # Automatically terminates after 2 seconds
 ./doc_processor -cmd "sleep 30" -timeout 2s
-```
-
-#### 3. Pre-warm Template Snapshots for Instant Reuse
-
-Save an initialized environment snapshot and restore it in subsequent runs. The
-restore needs exactly one snapshot in `-snapshot-dir`, so start with an empty
-directory:
-
-```bash
-mkdir -p ./snap_storage
-
-# Step 1: Pre-warm base templates and save snapshot
-./doc_processor -snapshot-dir ./snap_storage -warm-snapshot
-
-# Step 2: Run processing using the pre-warmed snapshot
-./doc_processor \
-  -snapshot-dir ./snap_storage \
-  -output ./results \
-  -cmd "cat /opt/templates/header.txt > /output/report.txt"
-
-cat ./results/report.txt
 ```

@@ -90,6 +90,10 @@ type Create struct {
 	// sandbox-wide settings only and containers are added afterwards.
 	noRootContainer bool
 
+	// execPath is the path of the program a subcontainer runs. If empty, the
+	// program is resolved from argv[0].
+	execPath string
+
 	// spec is the cached OCI spec.
 	spec *specs.Spec
 }
@@ -119,6 +123,7 @@ func (c *Create) SetFlags(f *flag.FlagSet) {
 	f.Var(&c.fsRestoreImagePaths, "fs-restore-image-path", "path to filesystem checkpoint (<dir> or <dir>/<prefix>) to restore (can be repeated; combining bundles from different checkpoints is only supported for create/run, not restore)")
 	f.BoolVar(&c.fsRestoreDirect, "fs-restore-direct", false, "open files in fs-restore-image-path with O_DIRECT")
 	f.BoolVar(&c.noRootContainer, "no-root-container", false, "create a sandbox with no root container; the bundle spec describes only the sandbox and containers are added later as subcontainers")
+	f.StringVar(&c.execPath, "exec-path", "", "path of the program to execute; if unset, it is resolved from argv[0]. Supported only for subcontainers")
 }
 
 // passFiles takes ownership of the descriptors supplied by --pass-fd. The
@@ -204,6 +209,7 @@ func (c *Create) Execute(_ context.Context, f *flag.FlagSet, args ...any) subcom
 		FSRestoreImagePaths: []string(c.fsRestoreImagePaths),
 		FSRestoreDirect:     c.fsRestoreDirect,
 		NoRootContainer:     c.noRootContainer,
+		ExecPath:            c.execPath,
 	}
 	if _, err := container.New(conf, contArgs); err != nil {
 		return util.Errorf("creating container: %v", err)

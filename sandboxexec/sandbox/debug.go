@@ -28,5 +28,5 @@ func DebugSpec(opts ...Option) (*specs.Spec, error) {
 	if err != nil {
 		return nil, err
 	}
-	return newSpec(options.toBundleConfig(nil))
+	return newSpec(options.toBundleConfig())
 }

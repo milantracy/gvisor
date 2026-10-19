@@ -422,10 +422,9 @@ func (c *bwrapConfig) parseUserns(args []string, i int) (int, error) {
 // injection into the host terminal, and the Sentry leaves TIOCSTI
 // unimplemented (see pkg/sentry/fsimpl/host/tty.go).
 //
-// --die-with-parent is a no-op because the sandbox init process is a
-// /bin/sleep placeholder (see sandboxexec/sandbox/oci.go) and COMMAND runs as
-// an exec inside it, so there is no parent-child relationship for
-// PR_SET_PDEATHSIG to act on. do() instead bounds the sandbox lifetime with
+// --die-with-parent is a no-op because the sandbox runs detached and COMMAND
+// runs in a container inside it (see sandboxexec/sandbox), so there is no
+// parent-child relationship for PR_SET_PDEATHSIG to act on. do() instead bounds the sandbox lifetime with
 // sandbox.Close(), which does not run if runsc is SIGKILLed.
 //
 // All are accepted for bubblewrap CLI compatibility.

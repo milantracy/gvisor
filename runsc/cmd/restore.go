@@ -138,6 +138,9 @@ func (r *Restore) Execute(_ context.Context, f *flag.FlagSet, args ...any) subco
 	if r.imagePath == "" {
 		return util.Errorf("image-path flag must be provided")
 	}
+	if r.execPath != "" {
+		return util.Errorf("exec-path flag is not supported with %q: restored processes come from the image", r.Name())
+	}
 
 	var cu cleanup.Cleanup
 	defer cu.Clean()

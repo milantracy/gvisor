@@ -32,22 +32,11 @@ func main() {
 	flag.DurationVar(&cfg.Timeout, "timeout", 10*time.Second, "Execution timeout (e.g. 5s, 30s)")
 	flag.StringVar(&cfg.Network, "network", "none", "Network mode: 'none' (isolated), 'host', or 'sandbox'")
 	flag.StringVar(&cfg.WorkingDir, "working-dir", "/", "Working directory inside the sandbox")
-	flag.StringVar(&cfg.SnapshotDir, "snapshot-dir", "", "Directory with exactly one pre-warmed snapshot to restore (-warm-snapshot writes it)")
-	warmSnapshot := flag.Bool("warm-snapshot", false, "Pre-warm and save a base template snapshot to -snapshot-dir and exit")
+	flag.StringVar(&cfg.SnapshotDir, "snapshot-dir", "", "Directory with exactly one rootfs tar snapshot to restore")
 	flag.Parse()
 	log.SetFlags(0)
 
-	ctx := context.Background()
-	var err error
-	switch {
-	case *warmSnapshot && cfg.SnapshotDir == "":
-		log.Fatal("Error: -snapshot-dir is required when using -warm-snapshot")
-	case *warmSnapshot:
-		err = docprocessor.WarmSnapshot(ctx, cfg.SnapshotDir)
-	default:
-		err = docprocessor.ProcessDocuments(ctx, cfg)
-	}
-	if err != nil {
+	if err := docprocessor.ProcessDocuments(context.Background(), cfg); err != nil {
 		log.Fatalf("Error: %v", err)
 	}
 }

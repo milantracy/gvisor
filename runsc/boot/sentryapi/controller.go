@@ -58,6 +58,10 @@ type StartArgs struct {
 	// CID is the ID of the container to start.
 	CID string
 
+	// ExecPath is the path of the program to run. If empty, the program is
+	// resolved from Spec.Process.Args[0]. Restore ignores it.
+	ExecPath string
+
 	// NumGoferFilestoreFDs is the number of gofer filestore FDs donated.
 	NumGoferFilestoreFDs int
 

@@ -141,6 +141,10 @@ type Container struct {
 	// following entries are for bind mounts in Spec.Mounts (in the same order).
 	GoferMountConfs specutils.GoferMountConfFlags `json:"goferMountConfs"`
 
+	// ExecPath is the path of the program a subcontainer runs. If empty, the
+	// program is resolved from Spec.Process.Args[0].
+	ExecPath string `json:"execPath,omitempty"`
+
 	//
 	// Fields below this line are not saved in the state file and will not
 	// be preserved across commands.
@@ -189,6 +193,11 @@ type Args struct {
 
 	// ExecFile is the host file used for program execution.
 	ExecFile *os.File
+
+	// ExecPath is the path of the program to execute, which lets argv[0]
+	// differ from it. If empty, the program is resolved from argv[0]. It is
+	// supported only for subcontainers.
+	ExecPath string
 
 	// If FSRestoreImagePaths is non-empty, it lists paths to filesystem
 	// checkpoints that should be restored. FSRestoreImagePaths may only be
@@ -247,6 +256,10 @@ func New(conf *config.Config, args Args) (*Container, error) {
 		}
 	}
 
+	if args.ExecPath != "" && specutils.IsRootContainer(args.Spec) {
+		return nil, fmt.Errorf("ExecPath is supported only for subcontainers")
+	}
+
 	if args.NoRootContainer {
 		if !specutils.IsRootContainer(args.Spec) {
 			return nil, fmt.Errorf("NoRootContainer can only be set when creating the sandbox, not a subcontainer")
@@ -264,6 +277,7 @@ func New(conf *config.Config, args Args) (*Container, error) {
 		Spec:          args.Spec,
 		ConsoleSocket: args.ConsoleSocket,
 		BundleDir:     args.BundleDir,
+		ExecPath:      args.ExecPath,
 		Status:        Creating,
 		CreatedAt:     time.Now(),
 		Owner:         os.Getenv("USER"),
@@ -496,7 +510,10 @@ func (c *Container) createSubcontainer(conf *config.Config, spec *specs.Spec) er
 // Start starts running the containerized process inside the sandbox.
 func (c *Container) Start(conf *config.Config) error {
 	log.Debugf("Start container, cid: %s", c.ID)
-	return c.startImpl(conf, "start", c.Sandbox.StartRoot, c.Sandbox.StartSubcontainer)
+	startSub := func(spec *specs.Spec, conf *config.Config, cid string, stdios, goferFiles, goferFilestores []*os.File, devIOFile *os.File, goferConfs []specutils.GoferMountConf) error {
+		return c.Sandbox.StartSubcontainer(spec, conf, cid, c.ExecPath, stdios, goferFiles, goferFilestores, devIOFile, goferConfs)
+	}
+	return c.startImpl(conf, "start", c.Sandbox.StartRoot, startSub)
 }
 
 // Restore takes a container and replaces its kernel and file system
