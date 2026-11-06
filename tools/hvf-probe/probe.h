@@ -104,6 +104,26 @@ void probe_expect_hvc(hv_vcpu_t vcpu, const hv_vcpu_exit_t* ex,
 extern const uint8_t guest_clean[], guest_clean_end[];
 extern const uint8_t guest_fpdirty[], guest_fpdirty_end[];
 extern const uint8_t guest_spin[], guest_spin_end[];
+extern const uint8_t guest_memop[], guest_memop_end[];
+
+// Result of probe_guest_access.
+enum access_result {
+  ACCESS_OK,     // The access completed and the guest exited with HVC.
+  ACCESS_FAULT,  // The guest exited with a data abort (EC 0x24).
+  ACCESS_OTHER,  // Any other exit; *esr holds the syndrome.
+};
+
+// Runs one guest load (store == 0) or store at guest address addr using the
+// guest_memop stub loaded at entry. A load stores the value in *out. *esr
+// gets the exit syndrome and *ipa the faulting IPA, if not NULL.
+enum access_result probe_guest_access(hv_vcpu_t vcpu, const hv_vcpu_exit_t* ex,
+                                      uint64_t entry, int store, uint64_t addr,
+                                      uint64_t val, uint64_t* out,
+                                      uint64_t* esr, uint64_t* ipa);
+
+// Returns the task's physical footprint (TASK_VM_INFO phys_footprint), in
+// bytes.
+uint64_t probe_phys_footprint(void);
 
 // Resets the vCPU to run guest_spin at entry_spin and sets the constants it
 // needs (d2 = 1.0, v4 = {1, 1}).

@@ -14,6 +14,7 @@
 
 #include "probe.h"
 
+#include <mach/mach.h>
 #include <mach/mach_time.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -318,4 +319,37 @@ void probe_spin_reset(hv_vcpu_t vcpu, uint64_t entry_spin) {
   memcpy((uint8_t*)&ones + 8, &u, 8);
   CHECK(hv_vcpu_set_simd_fp_reg(vcpu, HV_SIMD_FP_REG_Q2, one));
   CHECK(hv_vcpu_set_simd_fp_reg(vcpu, HV_SIMD_FP_REG_Q4, ones));
+}
+
+enum access_result probe_guest_access(hv_vcpu_t vcpu, const hv_vcpu_exit_t* ex,
+                                      uint64_t entry, int store, uint64_t addr,
+                                      uint64_t val, uint64_t* out,
+                                      uint64_t* esr, uint64_t* ipa) {
+  CHECK(hv_vcpu_set_reg(vcpu, HV_REG_X0, store ? 1 : 0));
+  CHECK(hv_vcpu_set_reg(vcpu, HV_REG_X1, addr));
+  CHECK(hv_vcpu_set_reg(vcpu, HV_REG_X2, val));
+  CHECK(hv_vcpu_set_reg(vcpu, HV_REG_PC, entry));
+  CHECK(hv_vcpu_run(vcpu));
+  uint64_t s = ex->exception.syndrome;
+  if (esr) *esr = s;
+  if (ipa) *ipa = ex->exception.physical_address;
+  if (ex->reason == HV_EXIT_REASON_EXCEPTION && ESR_EC(s) == EC_HVC64 &&
+      (s & 0xffff) == PROBE_HVC_IMM) {
+    if (!store && out) CHECK(hv_vcpu_get_reg(vcpu, HV_REG_X3, out));
+    return ACCESS_OK;
+  }
+  if (ex->reason == HV_EXIT_REASON_EXCEPTION && ESR_EC(s) == EC_DABT_LOWER) {
+    return ACCESS_FAULT;
+  }
+  return ACCESS_OTHER;
+}
+
+uint64_t probe_phys_footprint(void) {
+  task_vm_info_data_t info;
+  mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+  if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count) !=
+      KERN_SUCCESS) {
+    return 0;
+  }
+  return info.phys_footprint;
 }
