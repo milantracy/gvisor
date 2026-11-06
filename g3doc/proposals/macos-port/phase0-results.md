@@ -587,10 +587,10 @@ p99 for the 16 KiB refault total was 4.1-4.2 µs.
    pages, as with truncate in probe 5. For file memory, decommit can be a
    single `F_PUNCHHOLE`, and it gives Linux-like zero-fill.
 4. File memory is not counted in `phys_footprint`, but a `MAP_SHARED` file on
-   APFS is written back to disk: `st_blocks` grows with guest writes after
-   `msync`, and the kernel also writes dirty pages back without `msync`. A
-   disk file as the guest memory file trades footprint accounting for disk
-   I/O. `shm_open` memory cannot be punched (`EBADF`) and behaves like
+   APFS is backed by disk: `st_blocks` grows with guest writes after
+   `msync`. This probe did not measure when the kernel writes dirty pages back
+   without `msync`. A disk file as the guest memory file trades footprint
+   accounting for possible disk I/O. `shm_open` memory cannot be punched (`EBADF`) and behaves like
    anonymous memory for `madvise`.
 5. **Task memory accounting counts a page twice when both the host process
    and the guest map it.** `phys_footprint`, `resident_size` and `internal`
@@ -607,3 +607,79 @@ p99 for the 16 KiB refault total was 4.1-4.2 µs.
    has touched costs 708 ns for 16 KiB and 4.7 µs for 2 MiB (about 33 ns
    per page). Unmapping a range the guest never touched costs about 190 ns
    (probe 5).
+
+## Probe 7: kicking a set of vCPUs and running a TLBI on re-entry
+
+Source: `tools/hvf-probe/tlb_bounce.c` and `guest_tlbi_mailbox` in
+`guest_loops.S`. The machine has 8 performance and 4 efficiency cores. Two
+runs on 2026-11-06, after 300 ms of warm-up.
+
+Method. A host-side Sentry cannot run TLBI, so it writes a new generation
+number to a mailbox in guest memory and kicks the vCPUs with one
+`hv_vcpus_exit` call. Each vCPU thread re-enters the guest at the mailbox
+stub, which compares the generation with its own acknowledged generation,
+runs the TLBI if it is new, stores the acknowledgement, and then spins. The
+host times from the `hv_vcpus_exit` call until all N acknowledgements are
+visible. 2,000 bounces per configuration, 20-50 µs apart, after 200 warm-up
+bounces. The main thread is the kicker and has no vCPU.
+
+### A. TLBI cost inside the guest (one vCPU)
+
+Extra time of an HVC round trip that runs the TLBI and barriers, against a
+loop with only `dsb nsh; isb`. Best of 5 × 200,000.
+
+| Instruction sequence | Run 1 | Run 2 |
+|---|---|---|
+| baseline `dsb nsh; isb; hvc` | 690.6 ns | 688.7 ns |
+| `tlbi vmalle1; dsb nsh; isb` | +239 ns | +210 ns |
+| `tlbi vmalle1is; dsb ish; isb` | +232 ns | +212 ns |
+| `tlbi vae1; dsb nsh; isb` | +231 ns | +235 ns |
+
+With 8 other vCPUs spinning in the guest (part C):
+
+| Instruction sequence | Run 1 | Run 2 |
+|---|---|---|
+| baseline | 779.6 ns | 781.4 ns |
+| `tlbi vmalle1` | +346 ns | +306 ns |
+| `tlbi vmalle1is` | +300 ns | +324 ns |
+| `tlbi vae1` | +386 ns | +396 ns |
+
+No TLBI exited to the host: HVF does not trap guest EL1 TLBI.
+
+### B. Kick N vCPUs, TLBI on re-entry, until all N acknowledged
+
+p50 / p99 in µs, run 1 ; run 2:
+
+| N | No TLBI | `tlbi vmalle1` | `tlbi vmalle1is` | `hv_vcpus_exit` call alone (p50) |
+|---|---|---|---|---|
+| 1 | 1.00 / 4.8 ; 1.08 / 1.4 | 1.21 / 3.6 ; 1.33 / 9.6 | 1.38 / 3.5 ; 1.29 / 2.5 | 0.21 ; 0.25 |
+| 2 | 1.25 / 8.7 ; 1.33 / 7.6 | 1.63 / 4.1 ; 1.67 / 4.9 | 1.63 / 4.5 ; 1.71 / 4.0 | 0.33 ; 0.38 |
+| 4 | 2.46 / 3.4 ; 2.67 / 3.4 | 3.54 / 8.0 ; 4.58 / 7.0 | 3.13 / 7.9 ; 4.75 / 9.5 | 1.0-1.3 ; 1.4-1.5 |
+| 8 | 4.67 / 12.8 ; 6.25 / 15.3 | 5.25 / 10.3 ; 6.88 / 16.2 | 6.92 / 26.3 ; 7.63 / 22.5 | 2.3-3.3 ; 3.5-3.6 |
+| 11 | 8.88 / 225 ; 7.17 / 342 | 9.58 / 107 ; 7.00 / 316 | 9.38 / 403 ; 9.08 / 135 | 5.0-5.5 ; 3.3-4.5 |
+
+At N=8 and N=11 the p99.9 values reach 0.45-3.5 ms, and the maximum single
+bounce was 9.4 ms (N=11). With N=11 the 11 vCPU threads and the kicker use all
+12 cores, and some vCPU threads run on efficiency cores.
+
+### Findings
+
+1. **Guest TLBI is not trapped and costs about 210-240 ns** with its barrier
+   on an idle machine, about 300-400 ns while 8 other vCPUs run. A local
+   (`vmalle1`), broadcast (`vmalle1is`) and single-address (`vae1`) TLBI
+   all cost about the same. Using the cheapest form does not save
+   anything measurable.
+2. **The cost of one `hv_vcpus_exit` call grows with the number of vCPUs**:
+   about 0.2 µs for 1, 0.35 µs for 2, 1.0-1.5 µs for 4, 2.3-3.6 µs for 8,
+   3.3-5.5 µs for 11. The kicker pays roughly 0.3-0.45 µs per vCPU, so HVF
+   appears to signal the vCPUs one after another.
+3. **A full TLB shootdown through the mailbox takes about 1.0-1.3 µs for one
+   vCPU, 2.5-4.8 µs for 4 and 4.7-7.6 µs for 8** (p50, depending on run and
+   TLBI kind). The TLBI itself adds only 0.2-1.5 µs; most of the cost is
+   the kick and the guest exit and re-entry on each vCPU.
+4. **Tails grow fast when vCPU threads fill the machine.** With 8 vCPUs plus
+   the kicker, p99 is 10-26 µs and p99.9 up to 0.65 ms. With 11, p99 is
+   0.1-0.4 ms and single shootdowns take several ms. A shootdown waits for
+   the slowest vCPU, so the vCPU pool should stay below the number of
+   performance cores, or shootdowns should only wait for vCPUs that have run
+   the address space since its last flush.
