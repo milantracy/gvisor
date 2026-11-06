@@ -444,6 +444,9 @@ A separate check also failed with `HV_ERROR` for `O_RDONLY` + `MAP_SHARED` with
 | `eof`: 4-page `MAP_SHARED` mapping of a 1-page file | `hv_vm_map` ok. Page 0 works. Load and store past EOF exit with a stage-2 translation fault (DFSC 0x7). No `SIGBUS`, no hang. File size unchanged. |
 | `truncate`: `ftruncate` to 1 page while all 4 pages are mapped and touched by the guest | Page 3 load and store then exit with DFSC 0x7. Page 0 still works. `hv_vm_unmap` ok. |
 | `munmap`: host `munmap` of anonymous memory that is still mapped into the guest | `munmap` ok. **The guest still reads the old contents (0x77…), also after the host maps new memory at the same VA.** `hv_vm_unmap` ok afterwards. |
+| `reserve`: `PROT_NONE` anonymous reservation (4 pages and 1 GiB) | `hv_vm_map` ok. The guest reads zeros. After a host `mmap(MAP_FIXED)` of new memory over the reservation, the guest still reads zeros, not the new host contents. |
+| `reserve`: `PROT_NONE` reservation, then host `mprotect` to RW and a host store | The guest sees the host store (same VM object). |
+| `reserve`: host VA with no mapping, or a range with one unmapped 16 KiB page in the middle | **`HV_ERROR`** |
 
 ### Costs
 
@@ -503,6 +506,14 @@ A plain HVC round trip is about 683 ns (probe 1).
    for 4 KiB alignment) with the default IPA granule. Mapping over a mapped
    range fails (`HV_ERROR`); partial unmap and remapping of single pages
    work, which is what an on-demand IPA registry needs.
+8. **`hv_vm_map` needs host memory at every page of the range, and it never
+   follows later host `mmap` calls** (`reserve` mode, two runs, same
+   results). A `PROT_NONE` reservation is accepted and the guest sees that
+   reservation's own zero pages; `mprotect` keeps the same object, so the
+   guest then sees host stores. A new `mmap` at the same VA is not seen. A
+   range with any unmapped page fails. A whole-VA mapping as KVM does it
+   (map once, then let the host address space change) is therefore not
+   possible with HVF.
 
 ## Probe 6: releasing memory that is mapped into the guest
 
@@ -934,6 +945,11 @@ run (no arm64 Linux machine with KVM).
 These are inputs to the decision that `RESUME.md` puts after Phase 0; the
 decision itself is for the design doc.
 
+- `hv_vm_map` fails on any host VA range with an unmapped page, and a
+  stage-2 mapping never follows a later host `mmap` at the same VA (probe 5,
+  finding 8). KVM's model, one mapping of the whole Sentry VA that follows
+  host changes through MMU notifiers, has no HVF equivalent. See
+  [memory-mapping-options.md](memory-mapping-options.md).
 - `hv_vm_map` cost does not depend on size (330 ns for 16 KiB or 64 MiB), and
   stage 2 is filled lazily on first guest touch. Mapping large, mostly
   untouched ranges up front, as (A) does, is cheap in the map call.
