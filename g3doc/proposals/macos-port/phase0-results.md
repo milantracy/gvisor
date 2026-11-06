@@ -673,13 +673,73 @@ bounce was 9.4 ms (N=11). With N=11 the 11 vCPU threads and the kicker use all
    about 0.2 µs for 1, 0.35 µs for 2, 1.0-1.5 µs for 4, 2.3-3.6 µs for 8,
    3.3-5.5 µs for 11. The kicker pays roughly 0.3-0.45 µs per vCPU, so HVF
    appears to signal the vCPUs one after another.
-3. **A full TLB shootdown through the mailbox takes about 1.0-1.3 µs for one
+3. **A full TLB shootdown through the mailbox takes about 1.0-1.4 µs for one
    vCPU, 2.5-4.8 µs for 4 and 4.7-7.6 µs for 8** (p50, depending on run and
-   TLBI kind). The TLBI itself adds only 0.2-1.5 µs; most of the cost is
-   the kick and the guest exit and re-entry on each vCPU.
+   TLBI kind). The TLBI itself adds 0.2-2 µs; most of the cost is the kick
+   and the guest exit and re-entry on each vCPU.
 4. **Tails grow fast when vCPU threads fill the machine.** With 8 vCPUs plus
    the kicker, p99 is 10-26 µs and p99.9 up to 0.65 ms. With 11, p99 is
    0.1-0.4 ms and single shootdowns take several ms. A shootdown waits for
    the slowest vCPU, so the vCPU pool should stay below the number of
    performance cores, or shootdowns should only wait for vCPUs that have run
    the address space since its last flush.
+
+## Probe 8: spin-then-wait hand-off between two threads
+
+Source: `tools/hvf-probe/handoff.c`. No HVF calls. Both threads have QoS
+`USER_INTERACTIVE`. The wait primitive is `os_sync_wait_on_address` /
+`os_sync_wake_by_address_any` (macOS 14.4+) on a 64-bit word. The signaller
+calls wake only if the waiter has set a "may be blocked" flag (Dekker-style,
+sequentially consistent atomics). Three runs on 2026-11-06 after 300 ms of
+warm-up; the first run did not have the busy-waker cases.
+
+### Ping-pong round trip
+
+| Mode | Mean round trip, runs 1/2/3 (ns) | One way (ns) | p50 / p99 / p99.9 round trip (ns) | Wake calls per round trip |
+|---|---|---|---|---|
+| spin only | 71.9 / 71.2 / 73.0 | 36 | 83 / 83 / 125 | 0 |
+| spin 10 µs, then wait | 70.8 / 69.7 / 73.4 | 35 | 83 / 83 / 83-167 | ~0 |
+| spin 2 µs, then wait | 74.3 / 71.1 / 72.2 | 36 | 83 / 83 / 125 | < 0.001 |
+| no spin (always wait) | 2421 / 2268 / 2394 | 1134-1211 | 2292 / 5292-5500 / 9458-9917 | ~2 |
+| pthread mutex + condvar | 2640 / 2609 / 2617 | 1305-1320 | - | - |
+
+The timer resolution is 41.67 ns, so the spin percentiles are one or two
+ticks.
+
+### Wake latency of a blocked thread
+
+The waiter is blocked in `os_sync_wait_on_address` (no spin). After the idle
+period, the waker stamps the time and calls wake; the waiter stamps the time
+when it returns. "sleep": the waker is in `nanosleep` during the idle period
+(both cores idle). "busy": the waker spins during the idle period (only the
+waiter's core is idle). p50 / p99 in µs, run 2 ; run 3 (run 1, sleep only:
+5.96/9.17, 6.46/11.58, 11.88/41.92, 19.33/55.42).
+
+| Idle period | sleep | busy |
+|---|---|---|
+| 20 µs | 6.00 / 9.04 ; 6.08 / 9.42 | 7.42 / 19.75 ; 8.04 / 20.42 |
+| 200 µs | 5.25 / 11.08 ; 5.29 / 11.38 | 5.96 / 12.71 ; 6.04 / 12.21 |
+| 2 ms | 10.54 / 62.17 ; 9.92 / 37.96 | 11.42 / 15.46 ; 11.46 / 14.29 |
+| 20 ms | 19.58 / 354 ; 20.13 / 47.58 | 11.88 / 14.92 ; 11.83 / 15.71 |
+
+`os_sync_wake_by_address_any` with no waiter costs 114-147 ns and returns
+-1 with `ENOENT`.
+
+### Findings
+
+1. **A spinning hand-off costs about 36 ns one way**, about 1/20 of an HVC
+   round trip (683 ns). A 2 µs spin budget catches almost every hand-off in
+   a tight ping-pong (fewer than 1 in 1,000 iterations blocked).
+2. **A wait/wake hand-off between threads that blocked only briefly costs
+   about 1.1-1.2 µs one way**, slightly less than a pthread condvar
+   (1.3 µs). This is about 1.7 HVC round trips.
+3. **Waking a thread whose core has gone idle costs much more:** 5-8 µs at
+   p50 after 20-200 µs idle, 10-12 µs after 2 ms, 12-20 µs after 20 ms,
+   with p99 up to tens of µs (and 0.35 ms once with both cores idle). This
+   is the cost the vCPU pool pays when a vCPU thread sleeps between guest
+   entries, and it is 8-30 HVC round trips.
+4. Consequence for the design: the systrap-style spin-then-wait is right,
+   and the spin phase matters more than the wait primitive. A vCPU thread
+   that expects its task back within a few µs should spin; once it blocks,
+   the next hand-off costs 5-20 µs. The signaller should check a "blocked"
+   flag before calling wake, since an unneeded wake costs 114-147 ns.
