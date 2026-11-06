@@ -784,10 +784,159 @@ FP register access through HVF, per vCPU, 32 calls each:
    them costs about 165 ns. A full FP save+restore through the HVF API costs
    about 265 ns, less than half of an HVC round trip, and much less than the
    trap itself.
-4. Consequence for the lazy-FP design: on a vCPU hand-off between tasks, an
-   eager FP switch costs about 265 ns. A lazy switch costs nothing if the
-   task does not use FP before its next exit, and about 920 ns (trap +
-   restore) if it does. Lazy wins only if fewer than about 30% of hand-offs
-   touch FP before the next exit. Go programs and libc `memcpy` use SIMD
-   registers often, so the hit rate needs measuring on real workloads
-   before choosing.
+4. These numbers support the settled design (lazy FP access through the
+   `PullFullState` contract, with FP save and restore on every vCPU hand-off
+   between different tasks): the save and restore costs about 265 ns per
+   hand-off. A trap-based alternative (`FPEN = 0` after each hand-off,
+   restore on first use) costs about 920 ns each time the task uses FP
+   before its next exit, so it would only be cheaper if fewer than about 30%
+   of hand-offs touch FP. Go code and libc `memcpy` use SIMD registers often,
+   so this is not expected; it can be checked on real workloads later.
+
+## Probe 10: sanity checks (granules, IPA size, IPA granule)
+
+Source: `tools/hvf-probe/sanity.c`. Two runs on 2026-11-06 gave identical
+output.
+
+### `ID_AA64MMFR0_EL1` as HVF reports it
+
+`hv_vcpu_config_get_feature_reg` returns `0x000010000f100002`:
+
+| Field | Value | Meaning |
+|---|---|---|
+| PARange | 0x2 | 40-bit physical address range |
+| TGran4 | 0x0 | 4 KiB stage-1 granule supported |
+| TGran16 | 0x1 | 16 KiB stage-1 granule supported |
+| TGran64 | 0xf | 64 KiB granule **not** supported |
+| TGran4_2, TGran16_2, TGran64_2 | 0x0 | stage 2 as stage 1 |
+
+### Stage-1 granules from a cold vCPU
+
+Each case uses a newly created vCPU, programmed with an identity map of the
+first 1 GiB, then one guest load, one guest store, and one load from VA
+`0x50000000`, which is outside the stage-1 map.
+
+| `TCR_EL1.TG0` | Tables | Load / store | Load outside the map |
+|---|---|---|---|
+| 4 KiB (`TCR_EL1` `0x80803520`) | T0SZ=32, level-1 1 GiB block | ok / ok, host sees the store | guest vector 4: `ESR_EL1` EC 0x25 (data abort, same EL), DFSC 0x5 (translation fault, level 1), FAR `0x50000000` |
+| 16 KiB (`0x8080b51c`) | T0SZ=28, level-2 32 MiB blocks | ok / ok | guest vector 4: EC 0x25, DFSC 0x6 (level 2), FAR `0x50000000` |
+| 64 KiB (`0x80807520`) | T0SZ=32, level-2 512 MiB blocks | no exit within 200 ms | no exit within 200 ms |
+
+With the 64 KiB granule the guest loops on instruction aborts (`ESR_EL1`
+`0x86000006`, PC at `VBAR_EL1 + 0x200`): the vector fetch itself faults. The
+watchdog's `hv_vcpus_exit` stops the loop.
+
+### IPA size
+
+| VM | `hv_vm_map` at top page | `hv_vm_map` at the limit | Guest load at top page (MMU off) |
+|---|---|---|---|
+| default (36 bits) | IPA `0xf_ffff_c000` (2^36 − 16 KiB): ok | IPA 2^36: `HV_BAD_ARGUMENT` | ok, correct value |
+| `hv_vm_config_set_ipa_size(40)` | 2^40 − 16 KiB: ok; 2^39: ok; 2^36 − 16 KiB: ok | 2^40: `HV_BAD_ARGUMENT` | ok at all three |
+
+`hv_vm_config_set_ipa_size(41)` returns `HV_UNSUPPORTED`.
+
+### 4 KiB IPA granule (macOS 26)
+
+The default IPA granule is 16 KiB. `hv_vm_config_set_ipa_granule(4KB)` and
+`hv_vm_create` with it succeed.
+
+| Check | Result |
+|---|---|
+| Map 4 KiB at host page A + 4 KiB to IPA `0x20000000` | ok |
+| Map 4 KiB at host page B + 8 KiB to IPA `0x20001000` (adjacent) | ok |
+| Map at an IPA aligned to 2 KiB | `HV_BAD_ARGUMENT` |
+| Map 2 KiB | `HV_BAD_ARGUMENT` |
+| Guest load IPA `0x20000000` | ok, `0xa001` (page A, 4 KiB piece 1) |
+| Guest load IPA `0x20001000` | ok, `0xb002` (page B, 4 KiB piece 2) |
+| Guest load IPA `0x20002000` (not mapped) | stage-2 fault exit, EC 0x24, DFSC 0x7 |
+
+### Findings
+
+1. Both 4 KiB and 16 KiB stage-1 granules work from a cold vCPU with the
+   register set from `probe_vcpu_reset`. 64 KiB is not supported on M2 Max.
+   A guest stage-1 fault is delivered to the guest EL1 vector with the
+   correct EC, fault level and FAR; it does not exit to the host.
+2. The IPA space is 36 bits by default and 40 bits at most
+   (`hv_vm_config_set_ipa_size(40)`), matching PARange. Phase 1 should
+   configure 40 bits, as the report says.
+3. **With the macOS 26 4 KiB IPA granule, HVF maps 4 KiB pieces of 16 KiB
+   host pages at any 4 KiB-aligned IPA**, and two pieces from different
+   host pages at adjacent IPAs read correctly. A 4 KiB guest view (Phase 2
+   option) is possible at the stage-2 level without copying.
+4. A guest that loops on exceptions (here, an unsupported granule) never
+   exits by itself; `hv_vcpus_exit` stops it. The platform needs a
+   watchdog or a timer-based kick for this case.
+
+## Summary
+
+All ten probes ran on Apple M2 Max, macOS 26.6.2 (25G83), on 2026-11-06.
+The KVM comparison for probe 1 is not done (no arm64 Linux machine).
+
+### Costs at a glance (p50 or mean, ns)
+
+| Operation | Cost |
+|---|---|
+| Guest `hvc` round trip (`hv_vcpu_run` → guest → host) | 683 |
+| `hv_vcpu_get_reg` / `hv_vcpu_set_reg` | 5 / 3 |
+| Host `getppid()` | 84 |
+| `hv_vcpu_create` / `hv_vcpu_destroy` | 7,500-12,000 / 4,100 |
+| Program all vCPU registers (~170 calls) | 1,700-2,100 |
+| `hv_vcpus_exit` → owner's `hv_vcpu_run` returns | 630-670 |
+| `hv_vcpu_run` with a cancel already pending | 83 |
+| Signal to a thread in `hv_vcpu_run` (handler runs, run continues) | 2,300 |
+| `hv_vm_map` / `hv_vm_protect` / `hv_vm_unmap` (any size, untouched) | 330 / 200 / 190 |
+| First guest touch of a mapped page (extra) | 1,150 |
+| Release 16 KiB (unmap + `MADV_FREE_REUSABLE`) / refault it | 900 / 3,040 |
+| Guest TLBI + barrier | 210-240 |
+| Kick N vCPUs, TLBI on re-entry, all acknowledged: N = 1 / 4 / 8 | 1,000-1,400 / 2,500-4,800 / 4,700-7,600 |
+| Thread hand-off: spin / wait-wake (brief) / wake of an idle core | 36 / 1,150 / 5,000-20,000 |
+| FP trap: in guest / forwarded to host | 30 / 816 |
+| Save + restore Q0-Q31 through HVF | 265 |
+
+### Results that change or refine the feasibility report
+
+1. `hv_vm_map` rejects a `MAP_SHARED` mapping only when its **maximum**
+   protection lacks write (file opened `O_RDONLY`); then even a read-only
+   guest mapping fails. A `PROT_READ` `MAP_SHARED` mapping of an `O_RDWR`
+   file works, and so does `MAP_PRIVATE` of an `O_RDONLY` file (probe 5).
+   The EROFS image can stay `MAP_SHARED` if it is opened `O_RDWR`.
+2. "Pinned" is true for `madvise` only. `MADV_FREE_REUSABLE` and
+   `MADV_DONTNEED` do not release or zero anonymous pages that are in stage
+   2, but `F_PUNCHHOLE` on an APFS file and `ftruncate` take effect in stage
+   2 at once: the guest reads zeros or faults (probes 5 and 6). For a
+   file-backed memory file on APFS, decommit is one `F_PUNCHHOLE` with no
+   `hv_vm_unmap`. `F_PUNCHHOLE` does not work on `shm_open` objects (`EBADF`).
+3. `hv_vm_map` holds the memory object, not the host VA: after a host
+   `munmap` the guest still sees the old pages (probe 5). The registry must
+   `hv_vm_unmap` before the Sentry unmaps or reuses a range.
+4. The `phys_footprint` double count is real for `mmap`ed memory and is
+   accounting only: it appears when both the host process and the guest map
+   a page, and the system free count does not change (probe 6).
+5. A delivered signal does not end `hv_vcpu_run` (probe 4). Kicks must use
+   `hv_vcpus_exit`, which is sticky, coalescing and never lost (probe 3).
+6. A vCPU leaked by a thread exit is lost until the process exits; neither
+   `hv_vm_destroy` nor a new VM frees its slot (probe 2).
+7. `hv_vcpus_exit` costs the caller about 0.3-0.45 µs per vCPU, and
+   shootdown tails reach milliseconds once vCPU threads fill all cores
+   (probe 7).
+
+### Data for the whole-VA (A) against on-demand registry (B) decision
+
+These are inputs to the decision that `RESUME.md` puts after Phase 0; the
+decision itself is for the design doc.
+
+- `hv_vm_map` cost does not depend on size (330 ns for 16 KiB or 64 MiB), and
+  stage 2 is filled lazily on first guest touch. Mapping large, mostly
+  untouched ranges up front, as (A) does, is cheap in the map call.
+- The IPA space is at most 40 bits (1 TiB). (A) must fit every Sentry VA
+  range that can reach the guest into 1 TiB of IPA.
+- Under (A), every page the guest touches is counted twice in
+  `phys_footprint` while the Sentry also maps it, and anonymous pages
+  cannot be released without `hv_vm_unmap`. Under (B) the same applies to
+  the ranges the registry maps.
+- File-backed memory released with `F_PUNCHHOLE` needs no unmap under
+  either option.
+- The refault path that (B) depends on (stage-2 fault exit, `hv_vm_map`,
+  re-run) costs about 3 µs for a 16 KiB page; the exit reports the faulting
+  IPA in `physical_address`, and a stage-1 fault never exits to the host
+  (probe 10), so the two cannot be confused.
