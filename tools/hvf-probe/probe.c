@@ -27,8 +27,25 @@ extern const uint8_t guest_vectors[], guest_vectors_end[];
 
 uint8_t* guest_mem;
 
+const char* probe_strerror(hv_return_t r) {
+  switch (r) {
+    case HV_SUCCESS: return "HV_SUCCESS";
+    case HV_ERROR: return "HV_ERROR";
+    case HV_BUSY: return "HV_BUSY";
+    case HV_BAD_ARGUMENT: return "HV_BAD_ARGUMENT";
+    case HV_NO_RESOURCES: return "HV_NO_RESOURCES";
+    case HV_NO_DEVICE: return "HV_NO_DEVICE";
+    case HV_DENIED: return "HV_DENIED";
+    case HV_UNSUPPORTED: return "HV_UNSUPPORTED";
+  }
+  static __thread char buf[16];
+  snprintf(buf, sizeof(buf), "0x%x", (unsigned)r);
+  return buf;
+}
+
 void probe_die(const char* what, hv_return_t r, const char* file, int line) {
-  fprintf(stderr, "%s:%d: %s failed: 0x%x\n", file, line, what, (unsigned)r);
+  fprintf(stderr, "%s:%d: %s failed: %s\n", file, line, what,
+          probe_strerror(r));
   exit(1);
 }
 
@@ -178,6 +195,30 @@ void probe_vcpu_reset(hv_vcpu_t vcpu, uint64_t entry) {
 
 void probe_set_qos(void) {
   pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+}
+
+struct spawn_args {
+  void* (*fn)(void*);
+  void* arg;
+};
+
+static void* spawn_trampoline(void* p) {
+  struct spawn_args a = *(struct spawn_args*)p;
+  free(p);
+  probe_set_qos();
+  return a.fn(a.arg);
+}
+
+pthread_t probe_spawn(void* (*fn)(void*), void* arg) {
+  struct spawn_args* a = malloc(sizeof(*a));
+  a->fn = fn;
+  a->arg = arg;
+  pthread_t t;
+  if (pthread_create(&t, NULL, spawn_trampoline, a) != 0) {
+    perror("pthread_create");
+    exit(1);
+  }
+  return t;
 }
 
 double probe_ticks_to_ns(uint64_t ticks) {

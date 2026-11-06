@@ -12,9 +12,13 @@ CFLAGS  ?= -O2 -g -Wall -Wextra -Werror -std=c11
 CFLAGS  += -arch arm64
 LDFLAGS += -arch arm64 -framework Hypervisor
 
-PROBES  := vcpu_run
+PROBES  := vcpu_run vcpu_lifecycle
 OUT     := out
-COMMON  := $(OUT)/probe.o $(OUT)/vectors.o
+COMMON  := $(OUT)/probe.o $(OUT)/vectors.o $(OUT)/guest_loops.o
+
+# Arguments per run; a probe with several entries runs once per entry, each
+# in a new process.
+MODES_vcpu_lifecycle := cost leak leak-one
 
 all: $(addprefix $(OUT)/,$(PROBES))
 
@@ -27,12 +31,12 @@ $(OUT)/%.o: %.c probe.h | $(OUT)
 $(OUT)/%.o: %.S | $(OUT)
 	$(CC) -arch arm64 -c -o $@ $<
 
-$(OUT)/vcpu_run: $(OUT)/vcpu_run.o $(OUT)/vcpu_run_guest.o $(COMMON) hvf.entitlements
+$(OUT)/%: $(OUT)/%.o $(COMMON) hvf.entitlements
 	$(CC) $(LDFLAGS) -o $@ $(filter %.o,$^)
 	codesign -f -s - --entitlements hvf.entitlements $@
 
 run-%: $(OUT)/%
-	./$<
+	@for m in $(or $(MODES_$*),""); do echo "+ ./$< $$m"; ./$< $$m || exit 1; done
 
 run: $(addprefix run-,$(PROBES))
 
