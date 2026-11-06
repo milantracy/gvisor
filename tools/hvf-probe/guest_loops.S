@@ -149,3 +149,72 @@ _guest_hvc_dsb:
 	hvc #1
 	b 1b
 _guest_hvc_dsb_end:
+
+// FP trap loops. x9 is set to CPACR_EL1.FPEN = 0b11 (no trap).
+// _guest_fp_notrap: enable FP, use FP, exit.
+// _guest_fp_trap:   disable FP, use FP (traps to the EL1 vector), exit.
+	.globl _guest_fp_notrap
+	.globl _guest_fp_notrap_end
+_guest_fp_notrap:
+	movz x9, #0x30, lsl #16
+1:	msr cpacr_el1, x9
+	isb
+	fmov d0, x0
+	hvc #1
+	b 1b
+_guest_fp_notrap_end:
+
+	.globl _guest_fp_trap
+	.globl _guest_fp_trap_end
+_guest_fp_trap:
+1:	msr cpacr_el1, xzr
+	isb
+	fmov d0, x0
+	hvc #1
+	b 1b
+_guest_fp_trap_end:
+
+// Vector tables for the FP trap probe. Every slot except 4 (synchronous,
+// current EL with SP_ELx) does "hvc #(0x100 + slot)".
+	.macro vec_default first, last
+	.irp n, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+	.if (\n >= \first) && (\n <= \last)
+	.p2align 7
+	hvc #(0x100 + \n)
+	b .
+	.endif
+	.endr
+	.endm
+
+// Slot 4 handles an FP access trap (EC 0x07) in the guest: enable FP, eret.
+	.p2align 11
+	.globl _guest_vectors_fp_inguest
+	.globl _guest_vectors_fp_inguest_end
+_guest_vectors_fp_inguest:
+	vec_default 0, 3
+	.p2align 7
+	mrs x11, esr_el1
+	lsr x11, x11, #26
+	cmp x11, #7
+	b.ne 1f
+	movz x10, #0x30, lsl #16
+	msr cpacr_el1, x10
+	isb
+	eret
+1:	hvc #0x104
+	b .
+	vec_default 5, 15
+_guest_vectors_fp_inguest_end:
+
+// Slot 4 forwards the trap to the host with "hvc #2", then returns with
+// eret. The host enables FP (CPACR_EL1) before it resumes the vCPU.
+	.p2align 11
+	.globl _guest_vectors_fp_forward
+	.globl _guest_vectors_fp_forward_end
+_guest_vectors_fp_forward:
+	vec_default 0, 3
+	.p2align 7
+	hvc #2
+	eret
+	vec_default 5, 15
+_guest_vectors_fp_forward_end:
