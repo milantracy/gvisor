@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Guest loops for the vcpu_run probe. Each loop exits to the host once per
+// Guest loops shared by the probes. Each loop exits to the host once per
 // iteration with "hvc #1". The code is position independent; the host copies
 // it into guest memory.
 

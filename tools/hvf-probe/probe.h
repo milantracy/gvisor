@@ -28,6 +28,7 @@
 #define TOOLS_HVF_PROBE_PROBE_H_
 
 #include <Hypervisor/Hypervisor.h>
+#include <pthread.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -56,8 +57,14 @@
     if (_r != HV_SUCCESS) probe_die(#expr, _r, __FILE__, __LINE__);       \
   } while (0)
 
+// Returns the HV_* name of an hv_return_t, or "0x..." if unknown.
+const char* probe_strerror(hv_return_t r);
+
 void probe_die(const char* what, hv_return_t r, const char* file, int line)
     __attribute__((noreturn));
+
+// Runs fn on a new thread with QoS USER_INTERACTIVE and returns it.
+pthread_t probe_spawn(void* (*fn)(void*), void* arg);
 
 // Host memory backing the guest window.
 extern uint8_t* guest_mem;
