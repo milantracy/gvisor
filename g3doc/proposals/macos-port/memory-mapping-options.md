@@ -1,6 +1,6 @@
 # HVF platform: whole-VA mapping (A) or on-demand IPA registry (B)
 
-Status: draft recommendation. The decision belongs to the design doc owner.
+Status: decided, (B), on 2026-11-06.
 All numbers come from [phase0-results.md](phase0-results.md) (Apple M2 Max,
 macOS 26.6.2).
 
