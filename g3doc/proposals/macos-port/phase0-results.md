@@ -208,3 +208,94 @@ A new process gets all 64 vCPUs again (the `cost` run after the leak runs).
    recovered panic or an early return on a vCPU goroutine leaks a slot. The pool
    goroutines must never return while they own a vCPU, and a leaked slot
    cannot be recovered without restarting the process.
+
+## Probe 3: `hv_vcpus_exit` semantics
+
+Source: `tools/hvf-probe/vcpu_cancel.c` and `guest_spin` in `guest_loops.S`.
+Two runs on 2026-11-06 gave the same semantic results. Timings from both runs
+are shown.
+
+### Pending cancel (guest: `hvc #1` loop)
+
+| Sequence | Next runs |
+|---|---|
+| `hv_vcpus_exit` before the first `hv_vcpu_run` | run 1 `CANCELED` (PC unchanged at entry, syndrome 0), run 2 `EXCEPTION` (HVC) |
+| `hv_vcpus_exit` after an HVC exit, before the next run | run 1 `CANCELED`, run 2 `EXCEPTION` |
+| Two `hv_vcpus_exit` calls, then run | run 1 `CANCELED`, runs 2 and 3 `EXCEPTION` |
+| `hv_vcpus_exit` from another thread, which then exits | run 1 `CANCELED`, run 2 `EXCEPTION` |
+| `hv_vcpus_exit`, then ~170 register writes, then run | run 1 `CANCELED`, run 2 `EXCEPTION` |
+| 100,000 `hv_vcpus_exit` calls, then run | run 1 `CANCELED`, run 2 `EXCEPTION` |
+
+| Bad argument | Result |
+|---|---|
+| `hv_vcpus_exit` with ID 1000 (never created) | `HV_BAD_ARGUMENT`, no pending cancel |
+| `hv_vcpus_exit` with count 0 | `HV_SUCCESS`, no pending cancel |
+
+### Cancel of a running guest
+
+**Spinning guest.** The guest loop never exits by itself. It keeps an exact
+relation between x0, x1, d1 and both 64-bit lanes of v3 at every instruction
+boundary. Another thread calls `hv_vcpus_exit` 5-100 µs (random) after the
+runner signals it is about to run. This is repeated 5,000 times without
+resetting the guest, and the host checks the invariant after each exit.
+
+| Result | Run 1 | Run 2 |
+|---|---|---|
+| Exits that were not `CANCELED` | 0 | 0 |
+| GPR/FP/SIMD invariant mismatches | 0 | 0 |
+| Resumes with no forward progress | 0 | 0 |
+| Stop PC offsets 0/4/8/12/16 | 4038/710/0/0/252 | 4003/786/0/2/209 |
+
+**HVC-exiting guest.** The guest exits with HVC about every 0.7 µs. Another
+thread issues 5,000 cancels at random 2-50 µs intervals and waits up to 10 ms
+for each to be seen as a `CANCELED` exit.
+
+| Result | Run 1 | Run 2 |
+|---|---|---|
+| `CANCELED` exits for 5,000 cancels | 5000 | 5000 |
+| Lost cancels (none within 10 ms) | 0 | 0 |
+| Extra `CANCELED` exits | 0 | 0 |
+| HVC exits in the same period | 187,395 | 186,530 |
+
+### Latency and cost (ns)
+
+| Measurement | Run | min | p50 | p90 | p99 | p99.9 |
+|---|---|---|---|---|---|---|
+| `hv_vcpus_exit` call → `hv_vcpu_run` returns (spinning guest) | 1 | 542 | 625 | 1042 | 1583 | 3708 |
+| | 2 | 542 | 667 | 667 | 1375 | 7208 |
+| `hv_vcpus_exit` call → `CANCELED` seen by kicker (HVC guest) | 1 | 375 | 708 | 833 | 917 | 2625 |
+| | 2 | 375 | 708 | 875 | 958 | 6458 |
+| `hv_vcpus_exit` call duration, vCPU running | 1 | 167 | 208 | 333 | 542 | 1125 |
+| | 2 | 167 | 208 | 250 | 250 | 875 |
+| `hv_vcpu_run` with a cancel already pending | 1 | 42 | 83 | 125 | 125 | 125 |
+| | 2 | 42 | 83 | 125 | 125 | 125 |
+
+`hv_vcpus_exit` on a vCPU that is not running costs 100 ns per call (mean of
+100,000 calls, both runs).
+
+### Findings
+
+1. **A cancel is sticky.** A cancel issued while the vCPU is not in
+   `hv_vcpu_run` stays pending until the next run, from any thread. Register
+   writes do not clear it. The next run returns `CANCELED` without entering
+   the guest (PC unchanged) in about 83 ns.
+2. **Cancels coalesce.** Any number of cancels before a run gives exactly one
+   `CANCELED` exit; the run after it is normal. A preemption design can kick
+   freely without counting kicks, but it cannot use the number of `CANCELED`
+   exits to count events.
+3. **No cancel was lost or duplicated** in 10,000 races against a guest that
+   exits with HVC every 0.7 µs. A cancel that lands while the vCPU is in the
+   host after an HVC exit gives `CANCELED` on the next run.
+4. **Guest state is preserved.** A cancel stops the guest at an instruction
+   boundary with GPRs, FP registers and both halves of the 128-bit SIMD
+   registers consistent, and the guest resumes correctly. PC is not advanced.
+   Offsets 8 and 12 (after `fadd`, after the vector `add`) were almost never
+   the stop point; this is a microarchitectural effect of where the interrupt
+   is taken, not a correctness issue.
+5. Cancel latency from the `hv_vcpus_exit` call to the return of
+   `hv_vcpu_run` on the owner thread is about 0.6-0.7 µs at p50, about the
+   same as an HVC round trip. The kicking thread spends about 200 ns in the
+   call when the target is running and 100 ns when it is not.
+6. `hv_vcpus_exit` rejects an ID that never existed (`HV_BAD_ARGUMENT`) but
+   accepts a leaked ID (`HV_SUCCESS`, probe 2), so its return value cannot
+   detect a stale vCPU.
