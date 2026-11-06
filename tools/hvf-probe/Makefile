@@ -19,7 +19,7 @@ COMMON  := $(OUT)/probe.o $(OUT)/vectors.o $(OUT)/guest_loops.o
 # Arguments per run; a probe with several entries runs once per entry, each
 # in a new process.
 MODES_vcpu_lifecycle := cost leak leak-one
-MODES_vm_map := main eof truncate munmap
+MODES_vm_map := main eof truncate munmap reserve
 MODES_mem_release := anon file shm acct cost
 
 all: $(addprefix $(OUT)/,$(PROBES))
