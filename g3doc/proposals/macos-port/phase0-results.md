@@ -106,3 +106,105 @@ Findings:
 Not yet done for probe 1: the same guest under KVM on an arm64 Linux host
 (user-space exit against user-space exit). No arm64 Linux machine is
 available in this session.
+
+## Probe 2: vCPU limit, create/destroy cost, leaked vCPUs
+
+Source: `tools/hvf-probe/vcpu_lifecycle.c`. Three modes, each in its own
+process: `cost`, `leak` (200 threads) and `leak-one` (1 thread). Percentiles
+come from 2,000 iterations after 100 warm-up iterations.
+
+### Thread affinity
+
+| Call | Result |
+|---|---|
+| Second `hv_vcpu_create` on a thread that owns a vCPU | `HV_BUSY` |
+| `hv_vcpu_get_reg` from a non-owner thread | `HV_BAD_ARGUMENT` |
+| `hv_vcpu_set_reg` from a non-owner thread | `HV_BAD_ARGUMENT` |
+| `hv_vcpu_run` from a non-owner thread | `HV_BAD_ARGUMENT` |
+| `hv_vcpu_destroy` from a non-owner thread | `HV_BAD_ARGUMENT` |
+
+The failed non-owner calls have no side effect. The owner thread can still run
+(exit reason `EXCEPTION`) and destroy the vCPU after them.
+
+### vCPU limit
+
+`hv_vm_get_max_vcpu_count` returns 64. 64 threads each create one vCPU
+successfully (IDs 0-63). The 65th `hv_vcpu_create` returns
+`HV_NO_RESOURCES`. Both runs gave the same result.
+
+### Create and destroy cost (ns)
+
+Two runs, 2026-11-06. "idle VM": no other vCPU exists. "busy VM": 63 other
+vCPUs are live on parked threads.
+
+| Operation | Run | min | p50 | p90 | p99 | p99.9 |
+|---|---|---|---|---|---|---|
+| create, idle VM | 1 | 7875 | 12250 | 17083 | 20458 | 24958 |
+| create, idle VM | 2 | 6792 | 8208 | 10958 | 16500 | 21875 |
+| destroy, idle VM | 1 | 4500 | 6667 | 9042 | 12458 | 16833 |
+| destroy, idle VM | 2 | 3875 | 4125 | 5583 | 9042 | 16792 |
+| create, busy VM | 1 | 6917 | 8292 | 12208 | 15708 | 24042 |
+| create, busy VM | 2 | 6917 | 7542 | 11083 | 15417 | 20833 |
+| destroy, busy VM | 1 | 3917 | 4167 | 5458 | 10250 | 15750 |
+| destroy, busy VM | 2 | 3917 | 4083 | 6875 | 10333 | 13083 |
+
+Full vCPU life cycle on one thread (create, program all registers, two runs,
+destroy):
+
+| Step | Run | min | p50 | p90 | p99 |
+|---|---|---|---|---|---|
+| create | 1 | 7583 | 9333 | 11125 | 16375 |
+| create | 2 | 6750 | 7458 | 9458 | 14583 |
+| program all registers (~170 calls) | 1 | 1875 | 2083 | 2292 | 2458 |
+| program all registers (~170 calls) | 2 | 1625 | 1708 | 1792 | 2375 |
+| first `hv_vcpu_run` | 1 | 1208 | 1333 | 1458 | 1583 |
+| first `hv_vcpu_run` | 2 | 1042 | 1125 | 1208 | 1458 |
+| second `hv_vcpu_run` | 1 | 708 | 792 | 917 | 958 |
+| second `hv_vcpu_run` | 2 | 625 | 708 | 708 | 875 |
+| destroy | 1 | 4458 | 4917 | 6167 | 9125 |
+| destroy | 2 | 3958 | 4083 | 6167 | 10250 |
+
+A thread start plus create plus register programming, including the
+condition-variable hand-off of this probe, took 135-154 µs per thread. Most of
+that is thread creation and the hand-off, not HVF.
+
+### Leaked vCPUs
+
+A leaking thread creates a vCPU, runs it once, and returns without calling
+`hv_vcpu_destroy`.
+
+| Check | `leak-one` (1 leak) | `leak` (200 attempts) |
+|---|---|---|
+| Leaking threads whose create succeeded | 1 | 64 (the 65th got `HV_NO_RESOURCES`) |
+| Process exit status | 0, no crash | 0, no crash |
+| Main thread `get_reg`/`run`/`destroy` on a leaked ID | `HV_BAD_ARGUMENT` | `HV_BAD_ARGUMENT` |
+| Main thread `hv_vcpus_exit` on a leaked ID | `HV_SUCCESS` | `HV_SUCCESS` |
+| Concurrent vCPUs available afterwards | 63 | 0 |
+| `hv_vm_destroy` | `HV_SUCCESS` | `HV_SUCCESS` |
+| Second `hv_vm_create` | `HV_SUCCESS` | `HV_SUCCESS` |
+| Concurrent vCPUs in the second VM | 63 | 0 |
+
+A new process gets all 64 vCPUs again (the `cost` run after the leak runs).
+
+### Findings
+
+1. The limit is 64 vCPUs per process on M2 Max and macOS 26.6.2, the same
+   value as `hv_vm_get_max_vcpu_count`. The failure is `HV_NO_RESOURCES`.
+2. `hv_vcpu_create` costs 7.5-12 µs (p50) and `hv_vcpu_destroy` about 4 µs
+   (p50). The number of live vCPUs does not change these costs. The first run
+   after create costs about 400 ns more than later runs. Creating a vCPU per
+   task switch is not practical; this agrees with the fixed pool.
+3. Programming the full register state takes about 1.7-2.1 µs. A pool that
+   reuses vCPUs must not re-program all registers on every hand-off.
+4. **A vCPU whose owning thread exits without `hv_vcpu_destroy` is leaked for
+   the life of the process.** Its slot is not freed when the thread exits,
+   not by `hv_vm_destroy`, and not by a new `hv_vm_create`. No other thread
+   can destroy it (`HV_BAD_ARGUMENT`). The leak is silent: nothing crashes,
+   and `hv_vcpus_exit` on the dead ID returns `HV_SUCCESS`. Each leak removes
+   one of the 64 slots permanently.
+5. Consequence for the Go platform: a pool thread must call `hv_vcpu_destroy`
+   before it can exit. In Go, a goroutine that returns while it is locked
+   with `runtime.LockOSThread` makes the runtime terminate its thread, so a
+   recovered panic or an early return on a vCPU goroutine leaks a slot. The pool
+   goroutines must never return while they own a vCPU, and a leaked slot
+   cannot be recovered without restarting the process.
