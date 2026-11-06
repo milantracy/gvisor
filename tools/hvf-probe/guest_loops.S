@@ -75,3 +75,77 @@ _guest_memop:
 	hvc #1
 	b _guest_memop
 _guest_memop_end:
+
+// TLBI mailbox, run on every guest entry. The host sets x20 = address of the
+// requested generation, x21 = address of this vCPU's acknowledged
+// generation, x22 = TLBI kind (0 none, 1 vmalle1, 2 vmalle1is, 3 vae1 of
+// x23), and PC = _guest_tlbi_mailbox. If the requested generation is new,
+// the stub runs the TLBI, then stores the generation to [x21]. It then spins
+// until the host stops the vCPU.
+	.globl _guest_tlbi_mailbox
+	.globl _guest_tlbi_mailbox_end
+_guest_tlbi_mailbox:
+	ldr x0, [x20]
+	ldr x1, [x21]
+	cmp x0, x1
+	b.eq 9f
+	cbz x22, 8f
+	cmp x22, #1
+	b.ne 2f
+	tlbi vmalle1
+	dsb nsh
+	isb
+	b 8f
+2:	cmp x22, #2
+	b.ne 3f
+	tlbi vmalle1is
+	dsb ish
+	isb
+	b 8f
+3:	tlbi vae1, x23
+	dsb nsh
+	isb
+8:	str x0, [x21]
+9:	b 9b
+_guest_tlbi_mailbox_end:
+
+// HVC loops with one TLBI before each exit, to time the TLBI itself.
+	.globl _guest_hvc_vmalle1
+	.globl _guest_hvc_vmalle1_end
+_guest_hvc_vmalle1:
+1:	tlbi vmalle1
+	dsb nsh
+	isb
+	hvc #1
+	b 1b
+_guest_hvc_vmalle1_end:
+
+	.globl _guest_hvc_vmalle1is
+	.globl _guest_hvc_vmalle1is_end
+_guest_hvc_vmalle1is:
+1:	tlbi vmalle1is
+	dsb ish
+	isb
+	hvc #1
+	b 1b
+_guest_hvc_vmalle1is_end:
+
+	.globl _guest_hvc_vae1
+	.globl _guest_hvc_vae1_end
+_guest_hvc_vae1:
+1:	tlbi vae1, x23
+	dsb nsh
+	isb
+	hvc #1
+	b 1b
+_guest_hvc_vae1_end:
+
+// HVC loop with dsb+isb only, the baseline for the TLBI loops.
+	.globl _guest_hvc_dsb
+	.globl _guest_hvc_dsb_end
+_guest_hvc_dsb:
+1:	dsb nsh
+	isb
+	hvc #1
+	b 1b
+_guest_hvc_dsb_end:
