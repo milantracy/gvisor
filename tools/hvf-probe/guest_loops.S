@@ -39,3 +39,23 @@ _guest_fpdirty:
 	hvc #1
 	b 1b
 _guest_fpdirty_end:
+
+// Spins without exiting. Each iteration keeps these invariants, so the host
+// can check guest state at any instruction boundary (host sets d2 = 1.0 and
+// v4 = {1, 1}; everything else starts at 0):
+//
+//   PC offset  x1      d1      v3 lanes
+//   0          2*x0    x0      x0
+//   4          2*x0-2  x0-1    x0-1
+//   8          2*x0    x0-1    x0-1
+//   12         2*x0    x0      x0-1
+//   16         2*x0    x0      x0
+	.globl _guest_spin
+	.globl _guest_spin_end
+_guest_spin:
+1:	add x0, x0, #1
+	add x1, x1, #2
+	fadd d1, d1, d2
+	add v3.2d, v3.2d, v4.2d
+	b 1b
+_guest_spin_end:
