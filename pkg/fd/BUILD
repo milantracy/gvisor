@@ -7,7 +7,11 @@ package(
 
 go_library(
     name = "fd",
-    srcs = ["fd.go"],
+    srcs = [
+        "fd.go",
+        "fd_darwin.go",
+        "fd_linux.go",
+    ],
     importpath = "gvisor.dev/gvisor/pkg/fd",
     visibility = ["//visibility:public"],
     deps = [
