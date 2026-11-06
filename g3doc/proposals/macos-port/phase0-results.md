@@ -112,8 +112,16 @@ Findings:
    EC `0x16` (HVC64), IL=1, imm16=1.
 
 Not yet done for probe 1: the same guest under KVM on an arm64 Linux host
-(user-space exit against user-space exit). No arm64 Linux machine is
-available in this session.
+(user-space exit against user-space exit). The KVM probe is in
+`tools/hvf-probe/kvm/` (`make run`, optionally `CPU=n` to pin; needs
+read-write `/dev/kvm`, no root). It uses the same guest setup and variants.
+Because KVM handles guest HVC in the kernel as an SMCCC call, its main exit
+is an MMIO store to an IPA with no memory slot (`KVM_EXIT_MMIO`), which is
+also the exit gVisor's KVM platform uses. On Linux 6.4+ it also measures
+`hvc #0` forwarded to user space by the SMCCC filter (`KVM_EXIT_HYPERCALL`).
+The probe compiles without warnings with gcc 14.2 and Debian trixie kernel
+headers; it has not been run, because no arm64 Linux host with KVM is
+available (Docker Desktop on M2 has no nested KVM).
 
 ## Probe 2: vCPU limit, create/destroy cost, leaked vCPUs
 
@@ -870,7 +878,8 @@ The default IPA granule is 16 KiB. `hv_vm_config_set_ipa_granule(4KB)` and
 ## Summary
 
 All ten probes ran on Apple M2 Max, macOS 26.6.2 (25G83), on 2026-11-06.
-The KVM comparison for probe 1 is not done (no arm64 Linux machine).
+The KVM comparison for probe 1 is written (`tools/hvf-probe/kvm/`) but not
+run (no arm64 Linux machine with KVM).
 
 ### Costs at a glance (p50 or mean, ns)
 
