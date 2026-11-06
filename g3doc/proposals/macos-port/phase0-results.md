@@ -299,3 +299,73 @@ for each to be seen as a `CANCELED` exit.
 6. `hv_vcpus_exit` rejects an ID that never existed (`HV_BAD_ARGUMENT`) but
    accepts a leaked ID (`HV_SUCCESS`, probe 2), so its return value cannot
    detect a stale vCPU.
+
+## Probe 4: signals on a vCPU thread
+
+Source: `tools/hvf-probe/vcpu_signal.c`. The vCPU thread has a 64 KiB
+`sigaltstack`, as a Go thread has. Two runs on 2026-11-06 gave the same
+semantic results.
+
+### Blocked pending SIGURG
+
+The vCPU thread blocks SIGURG and sends SIGURG to itself with
+`pthread_kill`. `sigpending` then reports SIGURG pending. The thread then does
+1,000,000 HVC round trips.
+
+| Condition | ns/round trip (run 1 / run 2) | `hv_vcpu_run` failures | Non-HVC exits |
+|---|---|---|---|
+| No signal pending | 680.1 / 686.5 | 0 | 0 |
+| SIGURG blocked and pending | 678.9 / 683.9 | 0 | 0 |
+
+SIGURG stays pending through all runs. The handler runs once, when the thread
+unblocks SIGURG.
+
+### Unblocked SIGURG while the guest runs
+
+The guest spins (`guest_spin`) and never exits by itself. Another thread sends
+SIGURG to the vCPU thread with `pthread_kill` 2,000 times at random 20-100 µs
+intervals and waits up to 10 ms for the handler to run each time. Then it
+stops the vCPU with `hv_vcpus_exit`.
+
+| Result | Go flags `SA_ONSTACK\|SA_RESTART\|SA_SIGINFO` | `SA_ONSTACK\|SA_SIGINFO` |
+|---|---|---|
+| Handler calls for 2,000 signals | 2000 (both runs) | 2000 (both runs) |
+| `hv_vcpu_run` returns before the stop cancel | 0 | 0 |
+| `hv_vcpu_run` failures | 0 | 0 |
+| Guest GPR/FP/SIMD invariant mismatches | 0 | 0 |
+| Interrupted PC seen by the handler | `hv_trap+0x8` in Hypervisor.framework | same |
+
+Signal latency from `pthread_kill` to handler entry (ns):
+
+| Target thread | Run | min | p50 | p90 | p99 | p99.9 |
+|---|---|---|---|---|---|---|
+| In `hv_vcpu_run`, Go flags | 1 | 2250 | 2292 | 3000 | 7125 | 12875 |
+| | 2 | 2208 | 2292 | 2750 | 6792 | 10708 |
+| In `hv_vcpu_run`, no `SA_RESTART` | 1 | 2208 | 2292 | 2667 | 6750 | 12458 |
+| | 2 | 2208 | 2292 | 3042 | 6458 | 10792 |
+| Spinning in the host | 1 | 1958 | 2083 | 2667 | 6667 | 20125 |
+| | 2 | 1958 | 2000 | 2333 | 5958 | 7375 |
+
+### Findings
+
+1. **A blocked pending signal has no effect on `hv_vcpu_run`.** No failures,
+   no extra exits, no change in round-trip cost. A vCPU thread can keep SIGURG
+   (or any signal) blocked and pending while it runs the guest.
+2. **A delivered signal does not end `hv_vcpu_run`.** The kernel takes the
+   vCPU out of the guest, runs the handler on the vCPU thread with the
+   interrupted PC at `hv_trap+0x8`, and then restarts the trap and re-enters
+   the guest. The caller of `hv_vcpu_run` sees nothing. `SA_RESTART` makes
+   no difference. Guest state is intact.
+3. Consequence: a signal cannot be used to kick a vCPU out of the guest (KVM's
+   signal-based kick has no HVF equivalent). Preemption must use
+   `hv_vcpus_exit`, which probe 3 shows is reliable and about 3 times faster
+   (0.65 µs against 2.3 µs).
+4. Consequence for Go: when Go's SIGURG preemption signal hits a vCPU thread
+   inside `hv_vcpu_run`, the handler sees a PC in Hypervisor.framework, not
+   in Go code. Go does not inject an asynchronous preemption at a non-Go PC,
+   so the signal only costs a handler call (about 2.3 µs of latency on the
+   sender side) and the guest keeps running. The vCPU goroutine is in a
+   foreign call during `hv_vcpu_run`, so the Go scheduler can hand its P to
+   another thread.
+5. Signal delivery to a thread in `hv_vcpu_run` costs about 0.2-0.3 µs more
+   than to a thread spinning in the host.

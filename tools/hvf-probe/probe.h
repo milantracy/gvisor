@@ -100,4 +100,19 @@ void probe_print_percentiles(const char* label, uint64_t* ticks, size_t n);
 void probe_expect_hvc(hv_vcpu_t vcpu, const hv_vcpu_exit_t* ex,
                       uint16_t imm);
 
+// Guest loops in guest_loops.S.
+extern const uint8_t guest_clean[], guest_clean_end[];
+extern const uint8_t guest_fpdirty[], guest_fpdirty_end[];
+extern const uint8_t guest_spin[], guest_spin_end[];
+
+// Resets the vCPU to run guest_spin at entry_spin and sets the constants it
+// needs (d2 = 1.0, v4 = {1, 1}).
+void probe_spin_reset(hv_vcpu_t vcpu, uint64_t entry_spin);
+
+// Checks the guest_spin register invariants at the current PC. Returns 0 if
+// they hold and stores x0 and the PC offset in the loop; otherwise prints the
+// mismatch and returns 1.
+int probe_check_spin(hv_vcpu_t vcpu, uint64_t entry_spin, uint64_t* x0_out,
+                     uint64_t* off_out);
+
 #endif  // TOOLS_HVF_PROBE_PROBE_H_

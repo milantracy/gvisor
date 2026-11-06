@@ -31,8 +31,6 @@
 
 #include "probe.h"
 
-extern const uint8_t guest_clean[], guest_clean_end[];
-extern const uint8_t guest_fpdirty[], guest_fpdirty_end[];
 
 #define TRIALS 5
 #define ITERS 1000000
