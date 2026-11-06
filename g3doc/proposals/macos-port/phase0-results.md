@@ -743,3 +743,51 @@ waiter's core is idle). p50 / p99 in µs, run 2 ; run 3 (run 1, sleep only:
    that expects its task back within a few µs should spin; once it blocks,
    the next hand-off costs 5-20 µs. The signaller should check a "blocked"
    flag before calling wake, since an unneeded wake costs 114-147 ns.
+
+## Probe 9: lazy-FP trap (`CPACR_EL1.FPEN`) taken as a host exit
+
+Source: `tools/hvf-probe/fp_trap.c`, and `guest_fp_*` and
+`guest_vectors_fp_*` in `guest_loops.S`. Two runs on 2026-11-06 after 300 ms
+of warm-up. One iteration is: write `CPACR_EL1`, `isb`, `fmov d0, x0`,
+`hvc #1`. With `FPEN = 0` the `fmov` traps (EC 0x07) to the guest EL1 vector
+at `VBAR_EL1 + 0x200`; HVF does not route it to the host. The guest's
+`msr cpacr_el1` did not exit to the host either.
+
+| Variant | What handles the trap | ns/iteration, run 1 / 2 | Extra over no trap | Host trap exits per iteration |
+|---|---|---|---|---|
+| no trap | - (`FPEN = 0b11`) | 693.9 / 691.2 | - | 0 |
+| in guest | EL1 vector enables FP and `eret`s | 722.4 / 721.0 | +29 / +30 | 0 |
+| forward | EL1 vector does `hvc #2; eret`; host writes `CPACR_EL1` | 1510.5 / 1507.3 | +817 / +816 | 1 |
+| forward+FP | as forward, and the host writes Q0-Q31 | 1611.8 / 1619.2 | +918 / +928 | 1 |
+| host does all | default vector `hvc #0x104`; host reads ESR/ELR/SPSR_EL1 and writes CPACR_EL1, PC, CPSR | 1548.3 / 1549.9 | +854 / +859 | 1 |
+
+Each value is the median of 5 × 200,000 iterations.
+
+FP register access through HVF, per vCPU, 32 calls each:
+
+| Operation | Run 1 | Run 2 |
+|---|---|---|
+| `hv_vcpu_get_simd_fp_reg` Q0-Q31 | 161.7 ns | 167.1 ns |
+| `hv_vcpu_set_simd_fp_reg` Q0-Q31 | 100.4 ns | 102.9 ns |
+
+### Findings
+
+1. **An FP trap handled inside the guest costs about 30 ns.** A trap that
+   must reach the host costs about 816 ns: one extra guest exit and entry
+   (683 ns, probe 1) plus the trap and the `eret`. A host-side lazy-FP
+   switch makes the first FP instruction after a task switch cost about
+   1.2 HVC round trips.
+2. Letting the stub return with `eret` after `hvc` ("forward") is about 40 ns
+   cheaper than having the host emulate the exception return (read ESR, ELR
+   and SPSR, write PC and CPSR). The stub-forward shape is the cheaper one.
+3. Restoring all 32 Q registers on the trap adds about 100 ns, and saving
+   them costs about 165 ns. A full FP save+restore through the HVF API costs
+   about 265 ns, less than half of an HVC round trip, and much less than the
+   trap itself.
+4. Consequence for the lazy-FP design: on a vCPU hand-off between tasks, an
+   eager FP switch costs about 265 ns. A lazy switch costs nothing if the
+   task does not use FP before its next exit, and about 920 ns (trap +
+   restore) if it does. Lazy wins only if fewer than about 30% of hand-offs
+   touch FP before the next exit. Go programs and libc `memcpy` use SIMD
+   registers often, so the hit rate needs measuring on real workloads
+   before choosing.
