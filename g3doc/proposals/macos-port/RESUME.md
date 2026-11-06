@@ -22,7 +22,7 @@ needs is in this directory and in the gVisor checkout it lives in.
 - Phase 1 runs the Sentry on the host with a small EL1 stub in the guest (the maci0 fork's model). The in-guest Sentry (KVM model) is a Phase 3 spike whose measurements belong in Phase 0.
 - A fixed pool of vCPU-owning locked threads with a systrap-style spin-then-futex hand-off and task affinity. KVM's `machine.Get()` vCPU rebinding cannot be ported because HVF binds a vCPU to its creating thread.
 - `pagesize_16k` variant of `hostarch`/`ring0`/`pagetables` for Phase 1, including the vDSO linker-script `_params` offset. A 4 KiB guest view is a Phase 2 option gated on a measured compatibility need.
-- Whole-VA (A) versus on-demand IPA registry (B) is decided after Phase 0. Pages mapped with `hv_vm_map` are hypervisor-pinned, so decommit is unmap, release, remap on fault.
+- On-demand IPA registry (B), decided 2026-11-06 from the Phase 0 data (`memory-mapping-options.md`). HVF stage 2 does not follow host VA changes, so a KVM-style whole-VA mapping (A) is not possible. `MapFile` maps `memmap.File` ranges with `hv_vm_map`, and the owner of a host mapping calls `hv_vm_unmap` before it unmaps or reuses it. Decommit is `F_PUNCHHOLE` for an APFS memory file, and unmap, release, remap on fault otherwise.
 - The EL1 stub carries the fast-path table, EL0 ID-register `MRS` emulation, and a TLBI mailbox executed on every guest entry (a host-side Sentry cannot `tlbi`; `hv_vcpu_invalidate_tlb` is macOS 27+).
 - Lazy FP/SIMD via the systrap `PullFullState` contract, with FP save/restore on every vCPU hand-off between different tasks.
 - Hypervisor.framework bindings are cgo-free and in tree at `pkg/hvf`; the platform is in tree at `pkg/sentry/platform/hvf`; darwin host shims for the leaf packages are in tree, aimed at upstream.
@@ -33,8 +33,8 @@ needs is in this directory and in the gVisor checkout it lives in.
 Phase 0 probes 1-10 are done (2026-11-06, Apple M2 Max, macOS 26.6.2). The
 results and a summary are in `phase0-results.md`; the probes are in
 `tools/hvf-probe/` on the `macos-port/phase0-probe` branch. Still open: the
-KVM comparison for probe 1 on an arm64 Linux host, the A/B decision, and the
-design doc on google/gvisor#1270.
+KVM comparison for probe 1 on an arm64 Linux host (`tools/hvf-probe/kvm/`),
+and the design doc on google/gvisor#1270. The A/B decision is (B).
 
 ## Phase 0 probe plan (done)
 
