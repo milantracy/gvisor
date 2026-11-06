@@ -28,7 +28,15 @@ needs is in this directory and in the gVisor checkout it lives in.
 - Hypervisor.framework bindings are cgo-free and in tree at `pkg/hvf`; the platform is in tree at `pkg/sentry/platform/hvf`; darwin host shims for the leaf packages are in tree, aimed at upstream.
 - A design doc goes on google/gvisor#1270 after Phase 0 and before any platform code lands.
 
-## Next step: Phase 0 probe (about two weeks)
+## Status
+
+Phase 0 probes 1-10 are done (2026-11-06, Apple M2 Max, macOS 26.6.2). The
+results and a summary are in `phase0-results.md`; the probes are in
+`tools/hvf-probe/` on the `macos-port/phase0-probe` branch. Still open: the
+KVM comparison for probe 1 on an arm64 Linux host, the A/B decision, and the
+design doc on google/gvisor#1270.
+
+## Phase 0 probe plan (done)
 
 A C probe (not Go, so the numbers are free of cgo and scheduler noise), ad-hoc
 signed with the `com.apple.security.hypervisor` entitlement, measuring on the

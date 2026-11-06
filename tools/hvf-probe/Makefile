@@ -12,7 +12,7 @@ CFLAGS  ?= -O2 -g -Wall -Wextra -Werror -std=c11
 CFLAGS  += -arch arm64
 LDFLAGS += -arch arm64 -framework Hypervisor
 
-PROBES  := vcpu_run vcpu_lifecycle vcpu_cancel vcpu_signal vm_map mem_release tlb_bounce handoff fp_trap
+PROBES  := vcpu_run vcpu_lifecycle vcpu_cancel vcpu_signal vm_map mem_release tlb_bounce handoff fp_trap sanity
 OUT     := out
 COMMON  := $(OUT)/probe.o $(OUT)/vectors.o $(OUT)/guest_loops.o
 
