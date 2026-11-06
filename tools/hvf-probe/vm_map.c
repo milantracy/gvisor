@@ -22,6 +22,8 @@
 //   eof       File mapping that extends past EOF, mapped into the guest.
 //   truncate  File shrunk with ftruncate while it is mapped into the guest.
 //   munmap    Host munmap of memory that is still mapped into the guest.
+//   reserve   hv_vm_map of host VA that is a PROT_NONE reservation or has no
+//             host mapping, and of host memory that appears there later.
 
 #include <errno.h>
 #include <fcntl.h>
@@ -471,6 +473,69 @@ static void mode_munmap(void) {
   printf("hv_vm_unmap: %s\n", probe_strerror(hv_vm_unmap(TEST_IPA, REGION)));
 }
 
+static void reserve_case(const char* what, uint8_t* p, size_t size) {
+  hv_return_t r = hv_vm_map(p, TEST_IPA, size, HV_MEMORY_READ | HV_MEMORY_WRITE);
+  printf("%s: hv_vm_map %s\n", what, probe_strerror(r));
+  fflush(stdout);
+  if (r != HV_SUCCESS) return;
+  uint64_t v = 0, esr = 0;
+  report_access("  guest load", gload(TEST_IPA, &v, &esr), esr, v);
+  // Make the host range usable after the stage-2 mapping exists.
+  uint8_t* q = mmap(p, size, PROT_READ | PROT_WRITE,
+                    MAP_ANON | MAP_PRIVATE | MAP_FIXED, -1, 0);
+  if (q == MAP_FAILED) {
+    printf("  host mmap MAP_FIXED: %s\n", strerror(errno));
+  } else {
+    memset(q, 0x44, PAGE);
+    report_access("  guest load after host maps memory there",
+                  gload(TEST_IPA, &v, &esr), esr, v);
+  }
+  CHECK(hv_vm_unmap(TEST_IPA, size));
+}
+
+static void mode_reserve(void) {
+  // PROT_NONE reservation, as KVM's fillAddressSpace makes.
+  uint8_t* p = map_or_die(REGION, PROT_NONE, MAP_ANON | MAP_PRIVATE, -1);
+  reserve_case("PROT_NONE reservation", p, REGION);
+  munmap(p, REGION);
+
+  // PROT_NONE reservation made usable with mprotect after hv_vm_map.
+  p = map_or_die(REGION, PROT_NONE, MAP_ANON | MAP_PRIVATE, -1);
+  hv_return_t r = hv_vm_map(p, TEST_IPA, REGION, HV_MEMORY_READ | HV_MEMORY_WRITE);
+  printf("PROT_NONE then mprotect RW: hv_vm_map %s\n", probe_strerror(r));
+  if (r == HV_SUCCESS) {
+    CHECK(mprotect(p, REGION, PROT_READ | PROT_WRITE) == 0 ? HV_SUCCESS : HV_ERROR);
+    memset(p, 0x55, PAGE);
+    uint64_t v = 0, esr = 0;
+    report_access("  guest load after mprotect and host store",
+                  gload(TEST_IPA, &v, &esr), esr, v);
+    CHECK(hv_vm_unmap(TEST_IPA, REGION));
+  }
+  munmap(p, REGION);
+
+  // No host mapping at all.
+  p = map_or_die(REGION, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1);
+  munmap(p, REGION);
+  reserve_case("unmapped host VA", p, REGION);
+
+  // A hole in the middle of an otherwise mapped range.
+  p = map_or_die(3 * PAGE, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1);
+  munmap(p + PAGE, PAGE);
+  r = hv_vm_map(p, TEST_IPA, 3 * PAGE, HV_MEMORY_READ | HV_MEMORY_WRITE);
+  printf("range with an unmapped middle page: hv_vm_map %s\n",
+         probe_strerror(r));
+  if (r == HV_SUCCESS) CHECK(hv_vm_unmap(TEST_IPA, 3 * PAGE));
+  munmap(p, 3 * PAGE);
+
+  // A large reservation, as one whole-VA mapping would be.
+  size_t big = 1ULL << 30;
+  p = map_or_die(big, PROT_NONE, MAP_ANON | MAP_PRIVATE, -1);
+  r = hv_vm_map(p, TEST_IPA, big, HV_MEMORY_READ | HV_MEMORY_WRITE);
+  printf("1 GiB PROT_NONE reservation: hv_vm_map %s\n", probe_strerror(r));
+  if (r == HV_SUCCESS) CHECK(hv_vm_unmap(TEST_IPA, big));
+  munmap(p, big);
+}
+
 int main(int argc, char** argv) {
   const char* mode = argc > 1 ? argv[1] : "";
   void (*fn)(void) = NULL;
@@ -478,8 +543,9 @@ int main(int argc, char** argv) {
   if (strcmp(mode, "eof") == 0) fn = mode_eof;
   if (strcmp(mode, "truncate") == 0) fn = mode_truncate;
   if (strcmp(mode, "munmap") == 0) fn = mode_munmap;
+  if (strcmp(mode, "reserve") == 0) fn = mode_reserve;
   if (!fn) {
-    fprintf(stderr, "usage: %s main|eof|truncate|munmap\n", argv[0]);
+    fprintf(stderr, "usage: %s main|eof|truncate|munmap|reserve\n", argv[0]);
     return 2;
   }
   probe_set_qos();
