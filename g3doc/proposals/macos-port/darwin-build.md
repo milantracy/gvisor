@@ -2,7 +2,34 @@
 
 Status: in progress. Apple M2 Max, macOS 26.6.2, Go 1.27.3.
 
-## Bazel
+## Host setup
+
+Install these once before building gVisor on a Mac:
+
+1.  Xcode Command Line Tools, for `clang`:
+
+    ```
+    xcode-select --install
+    ```
+
+2.  `lld` (the LLVM ELF linker) and `bazelisk`, from Homebrew:
+
+    ```
+    brew install lld bazelisk
+    ```
+
+3.  Optional, to run `//vdso:vdso_test`: Homebrew LLVM, for `llvm-readelf`.
+    The test calls `readelf`, so put a link named `readelf` on `PATH`:
+
+    ```
+    brew install llvm
+    ln -s "$(brew --prefix llvm)/bin/llvm-readelf" "$(brew --prefix)/bin/readelf"
+    ```
+
+No sudo and no Docker are needed. Bazel downloads the Go SDK and a Linux
+header sysroot itself. Build with `bazelisk build //<target>` from the
+repository root; `.bazelrc` applies the `macos` config automatically.
+
 
 Native Bazel works on the Mac. No Docker and no `make` wrapper are needed.
 
@@ -32,7 +59,7 @@ first-level failures only; packages that depend on them were not compiled.
 
 | Target | First error | Cause |
 |---|---|---|
-| `//vdso` | `/usr/bin/aarch64-linux-gnu-gcc: No such file` (and the x86_64 one) | Needs a Linux-targeting C toolchain. |
+| `//vdso` | `/usr/bin/aarch64-linux-gnu-gcc: No such file` (and the x86_64 one) | Needs a Linux-targeting C toolchain. Fixed; see [vDSO](#vdso). |
 | `//pkg/fdchannel` | `unix.SOCK_CLOEXEC` undefined | No `SOCK_CLOEXEC` on darwin. |
 | `//pkg/sentry/usage` | `memutil.CreateMemFD` undefined | No `memfd_create`. |
 | `//pkg/fd` | `unix.O_LARGEFILE` undefined | Linux-only flag. |
@@ -63,13 +90,20 @@ darwin support or a dependency cut:
 
 ## vDSO
 
-The `//vdso` genrule uses the C++ toolchain, which resolves to a Linux GNU
-cross compiler that is not on the Mac. The output is a `-nostdlib` Linux ELF,
-so any compiler that targets `aarch64-linux-gnu` and an ELF linker can build
-it. Homebrew LLVM 19 has `clang` but no `ld.lld` (Homebrew ships `lld` as a
-separate formula). Options:
+The vDSO is a `-nostdlib` Linux ELF, built for both arm64 and amd64 by a
+transition in `//pkg/sentry/loader/vdsodata`. On Linux the genrule uses the
+GNU cross compilers from `@crosstool`, which a Mac does not have.
 
-1.  A darwin branch in the genrule that calls `clang --target=aarch64-linux-gnu
-    -fuse-ld=lld`. Needs `lld` on the Mac.
-2.  A vendored prebuilt `vdso.so` for darwin builds, checked by
-    `//vdso:vdso_test`.
+On macOS, `.bazelrc` sets `--//vdso:darwin_host` (through `build:macos` and
+`--enable_platform_specific_config`). The genrule then uses:
+
+-   Apple `clang` with `--target=aarch64-linux-gnu` or `x86_64-linux-gnu`.
+-   `ld.lld`, found on `PATH`, `/opt/homebrew/bin` or `/usr/local/bin`.
+-   `--sysroot` set to `@linux_sysroot`, a header-only sysroot that Bazel makes
+    from three Debian packages pinned on snapshot.debian.org: `libc6-dev`
+    2.41-12+deb13u4 for arm64 and amd64, and `linux-libc-dev` 6.12.107-1
+    (`tools/bazeldefs/linux_sysroot.bzl`).
+
+Both outputs pass `vdso/check_vdso.py --check-data`. With the `macos` config
+off, the genrule command is the same as before (checked with `bazelisk
+aquery`).
