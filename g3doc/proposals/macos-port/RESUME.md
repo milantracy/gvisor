@@ -5,10 +5,33 @@ Linux machine. Claude Code sessions do not transfer between machines, so a new
 session on the MacBook starts from these files. Everything the new session
 needs is in this directory and in the gVisor checkout it lives in.
 
+## Goal
+
+A native macOS binary that starts the gVisor Sentry and the other gVisor
+components on the Mac and runs Linux programs in it. Agreed on 2026-11-06.
+
+| Component | On Linux today | On macOS | Phase |
+|---|---|---|---|
+| Sentry (the gVisor kernel) | Runs inside `runsc` | The same Go code, with darwin files for its Linux-only leaf packages | 1 |
+| Platform (traps application syscalls) | ptrace, systrap, or KVM | New `hvf` platform on Hypervisor.framework | 1 |
+| Launcher | `runsc` | A small darwin command that boots the Sentry and runs one program | 1 |
+| Root filesystem | Gofer, EROFS, overlay | EROFS image | 1 |
+| Host files | Gofer process with directfs | A darwin gofer process | 2 |
+| Networking | netstack with host link endpoints | netstack with a user-space proxy or vmnet | 2 |
+| Sentry confinement | seccomp and namespaces | Seatbelt profile and a separate gofer process | 2 |
+| `runsc`-style CLI | `runsc run`, OCI | Grows from the launcher as Phase 2 lands | 2 and later |
+
+The Phase 1 exit criterion is static busybox `echo hello` and `dmesg` from an
+EROFS root. A full `runsc` build on macOS is not a Phase 1 goal. Linux builds
+must not change.
+
 ## What is here
 
 | File | What it is |
 |---|---|
+| `phase0-results.md` | Phase 0 probe results and summary. |
+| `memory-mapping-options.md` | Whole-VA (A) against on-demand IPA registry (B); (B) is decided. |
+| `darwin-build.md` | macOS host setup and the state of the native darwin Bazel build. |
 | `feasibility-report.md` | The reviewed report (~9,100 words). Passed three rounds of independent review on 2026-11-06; both reviewers agree with the final design. Read this first. |
 | `research_notes/sentry_platform_host_dependencies.md` | Inventory of Linux-host dependencies in the platform, ring0, pgalloc, signal and syscall layers, with `file:line` references at commit `f51a205a8`. |
 | `research_notes/runsc_fs_net_build_dependencies.md` | Same inventory for runsc, gofer/lisafs/directfs/EROFS, netstack link layers, seccomp/cgroups, and the Bazel/`go` branch build. Includes the `GOOS=darwin` build experiment results. |
@@ -35,6 +58,13 @@ results and a summary are in `phase0-results.md`; the probes are in
 `tools/hvf-probe/` on the `macos-port/phase0-probe` branch. Still open: the
 KVM comparison for probe 1 on an arm64 Linux host (`tools/hvf-probe/kvm/`),
 and the design doc on google/gvisor#1270. The A/B decision is (B).
+
+The darwin build is in progress on `macos-port/darwin-shims` (`darwin-build.md`
+has the host setup and the list of failing packages). Native Bazel works on the
+Mac. Done: `pkg/fd`, and the vDSO (clang, lld, and a Debian header sysroot).
+Next: darwin files for the remaining leaf packages on the demo path
+(`fdchannel`, `hostfd`, `aio`, `p9`, `fsutil`, `usage`, `eventfd`, `flipcall`,
+`seccomp`, `pinring`), each checked with a darwin build and a Linux build.
 
 ## Phase 0 probe plan (done)
 
