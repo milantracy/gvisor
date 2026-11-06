@@ -59,3 +59,19 @@ _guest_spin:
 	add v3.2d, v3.2d, v4.2d
 	b 1b
 _guest_spin_end:
+
+// One memory access per run. The host sets x0 = 0 (load) or 1 (store),
+// x1 = address, x2 = value to store, and PC = _guest_memop. A load returns the
+// value in x3. The access is followed by "hvc #1". A stage-2 fault exits
+// with PC at the ldr/str.
+	.globl _guest_memop
+	.globl _guest_memop_end
+_guest_memop:
+	cbnz x0, 1f
+	ldr x3, [x1]
+	hvc #1
+	b _guest_memop
+1:	str x2, [x1]
+	hvc #1
+	b _guest_memop
+_guest_memop_end:

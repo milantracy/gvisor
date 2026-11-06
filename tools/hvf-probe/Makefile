@@ -12,13 +12,14 @@ CFLAGS  ?= -O2 -g -Wall -Wextra -Werror -std=c11
 CFLAGS  += -arch arm64
 LDFLAGS += -arch arm64 -framework Hypervisor
 
-PROBES  := vcpu_run vcpu_lifecycle vcpu_cancel vcpu_signal
+PROBES  := vcpu_run vcpu_lifecycle vcpu_cancel vcpu_signal vm_map
 OUT     := out
 COMMON  := $(OUT)/probe.o $(OUT)/vectors.o $(OUT)/guest_loops.o
 
 # Arguments per run; a probe with several entries runs once per entry, each
 # in a new process.
 MODES_vcpu_lifecycle := cost leak leak-one
+MODES_vm_map := main eof truncate munmap
 
 all: $(addprefix $(OUT)/,$(PROBES))
 
