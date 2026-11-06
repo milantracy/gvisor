@@ -32,7 +32,6 @@
 
 #include "probe.h"
 
-extern const uint8_t guest_clean[], guest_clean_end[];
 
 #define COST_ITERS 2000
 #define MAX_THREADS 256

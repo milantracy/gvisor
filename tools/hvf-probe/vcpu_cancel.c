@@ -33,8 +33,6 @@
 
 #include "probe.h"
 
-extern const uint8_t guest_clean[], guest_clean_end[];
-extern const uint8_t guest_spin[], guest_spin_end[];
 
 #define SPIN_CANCELS 5000
 #define HVC_KICKS 5000
@@ -152,63 +150,10 @@ static void* spin_kicker(void* arg) {
   return NULL;
 }
 
-static double q_lo(hv_simd_fp_uchar16_t q) {
-  double d;
-  memcpy(&d, &q, 8);
-  return d;
-}
-
-static uint64_t q_u64(hv_simd_fp_uchar16_t q, int lane) {
-  uint64_t v;
-  memcpy(&v, (uint8_t*)&q + 8 * lane, 8);
-  return v;
-}
-
-// Checks the guest_spin invariants. Returns 0 if they hold.
-static int check_spin_state(uint64_t* x0_out, uint64_t* off_out) {
-  uint64_t pc, x0, x1;
-  hv_simd_fp_uchar16_t q1, q3;
-  CHECK(hv_vcpu_get_reg(vcpu, HV_REG_PC, &pc));
-  CHECK(hv_vcpu_get_reg(vcpu, HV_REG_X0, &x0));
-  CHECK(hv_vcpu_get_reg(vcpu, HV_REG_X1, &x1));
-  CHECK(hv_vcpu_get_simd_fp_reg(vcpu, HV_SIMD_FP_REG_Q1, &q1));
-  CHECK(hv_vcpu_get_simd_fp_reg(vcpu, HV_SIMD_FP_REG_Q3, &q3));
-  uint64_t off = pc - entry_spin;
-  uint64_t ex1, ed1, ev3;
-  switch (off) {
-    case 0: ex1 = 2 * x0; ed1 = x0; ev3 = x0; break;
-    case 4: ex1 = 2 * x0 - 2; ed1 = x0 - 1; ev3 = x0 - 1; break;
-    case 8: ex1 = 2 * x0; ed1 = x0 - 1; ev3 = x0 - 1; break;
-    case 12: ex1 = 2 * x0; ed1 = x0; ev3 = x0 - 1; break;
-    case 16: ex1 = 2 * x0; ed1 = x0; ev3 = x0; break;
-    default:
-      printf("PC outside loop: entry%+lld\n", (long long)off);
-      return 1;
-  }
-  *x0_out = x0;
-  *off_out = off;
-  if (x1 != ex1 || q_lo(q1) != (double)ed1 || q_u64(q3, 0) != ev3 ||
-      q_u64(q3, 1) != ev3) {
-    printf("state mismatch at offset %llu: x0 %llu x1 %llu (want %llu) d1 %.0f "
-           "(want %llu) v3 {%llu,%llu} (want %llu)\n",
-           off, x0, x1, ex1, q_lo(q1), ed1, q_u64(q3, 0), q_u64(q3, 1), ev3);
-    return 1;
-  }
-  return 0;
-}
-
 static void cancel_spinning(void) {
   printf("\n## Cancel of a spinning guest, %d cancels, random delay 5-100 us\n",
          SPIN_CANCELS);
-  probe_vcpu_reset(vcpu, entry_spin);
-  hv_simd_fp_uchar16_t one = {0}, ones = {0};
-  double d = 1.0;
-  memcpy(&one, &d, 8);
-  uint64_t u = 1;
-  memcpy(&ones, &u, 8);
-  memcpy((uint8_t*)&ones + 8, &u, 8);
-  CHECK(hv_vcpu_set_simd_fp_reg(vcpu, HV_SIMD_FP_REG_Q2, one));
-  CHECK(hv_vcpu_set_simd_fp_reg(vcpu, HV_SIMD_FP_REG_Q4, ones));
+  probe_spin_reset(vcpu, entry_spin);
 
   srandom(1);
   for (int i = 0; i < SPIN_CANCELS; i++) {
@@ -233,7 +178,7 @@ static void cancel_spinning(void) {
       probe_expect_hvc(vcpu, vexit, 0xffff);  // Prints the exit and exits.
     }
     uint64_t x0, off;
-    if (check_spin_state(&x0, &off) != 0) {
+    if (probe_check_spin(vcpu, entry_spin, &x0, &off) != 0) {
       bad++;
       if (bad > 5) break;
       continue;
