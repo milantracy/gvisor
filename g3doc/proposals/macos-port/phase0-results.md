@@ -495,3 +495,115 @@ A plain HVC round trip is about 683 ns (probe 1).
    for 4 KiB alignment) with the default IPA granule. Mapping over a mapped
    range fails (`HV_ERROR`); partial unmap and remapping of single pages
    work, which is what an on-demand IPA registry needs.
+
+## Probe 6: releasing memory that is mapped into the guest
+
+Source: `tools/hvf-probe/mem_release.c`. Five modes, each in its own process:
+`anon`, `file`, `shm`, `acct`, `cost`. Each case uses a 64 MiB region (4,096
+host pages), filled by the guest with a per-page pattern before the release.
+"old" means a page still holds the pattern after the release. Two runs on
+2026-11-06 gave the same results (footprints within 0.1 MiB, timings within a
+few percent).
+
+### Anonymous memory (`MAP_ANON|MAP_PRIVATE`)
+
+`phys_footprint` is from `TASK_VM_INFO`. Before the region exists it is
+1.7 MiB; after the guest writes all 64 MiB it is 65.8 MiB.
+
+| Release | Footprint after release | Host then reads | Guest then reads |
+|---|---|---|---|
+| `MADV_FREE_REUSABLE` while mapped into the guest | 65.8 MiB (not released) | all old | all old |
+| `hv_vm_unmap`, then `MADV_FREE_REUSABLE` | 1.8 MiB (released) | all old, footprint stays 1.8 MiB | after `MADV_FREE_REUSE` + `hv_vm_map`: all old |
+| `MADV_DONTNEED` while mapped into the guest | 65.8 MiB (not released) | all old | all old |
+| `hv_vm_unmap`, then `MADV_DONTNEED` | 1.8 MiB (released) | all old, footprint back to 65.8 MiB | after `hv_vm_map`: all old |
+
+### File memory (APFS file, `MAP_SHARED`)
+
+| Release | `st_blocks` after release | Host mapping and `pread` | Guest then reads | Guest rewrites all pages |
+|---|---|---|---|---|
+| `F_PUNCHHOLE` of the whole file while mapped into the guest | 64 MiB → 0 | all zero | **all zero, no fault** | ok, `st_blocks` 64 MiB again after `msync` |
+| `hv_vm_unmap`, then `F_PUNCHHOLE`, then `hv_vm_map` | 64 MiB → 0 | all zero | all zero | ok |
+
+`phys_footprint` stays at 1.8 MiB while the guest uses 64 MiB of file memory:
+file-backed pages are not in the footprint.
+
+### `shm_open` memory
+
+| Release | Result |
+|---|---|
+| `F_PUNCHHOLE` | fails, `EBADF` (not supported on POSIX shm) |
+| `MADV_FREE_REUSABLE` while mapped into the guest | ok, footprint stays 65.8 MiB, guest still sees all old data |
+| `hv_vm_unmap`, then `MADV_FREE_REUSABLE` | footprint 65.8 → 1.8 MiB, host still reads all old data |
+
+### Memory accounting (`acct` mode)
+
+| Step | `phys_footprint` | `resident_size` | System free |
+|---|---|---|---|
+| start | 1.7 | 6.0 | 7522 |
+| host writes 64 MiB | 65.8 | 70.0 | 7459 |
+| `hv_vm_map` | 65.8 | 70.0 | 7459 |
+| guest reads all pages | **129.8** | **134.0** | 7459 |
+| `hv_vm_unmap` | 65.8 | 70.0 | 7459 |
+
+The reverse order (guest writes first, then host reads) gives the same 129.8
+MiB. All values in MiB.
+
+### Cost of release and remap on fault (`cost` mode)
+
+Anonymous memory, after 300 ms of warm-up. Release is `hv_vm_unmap` +
+`MADV_FREE_REUSABLE` of one chunk whose pages the guest has touched. Refault
+is: guest store to the chunk → stage-2 fault exit → `MADV_FREE_REUSE` →
+`hv_vm_map` of the chunk → re-run (the store re-executes, then HVC). p50 ns,
+run 1 / run 2:
+
+| Step | 16 KiB chunk (4,096 chunks) | 2 MiB chunk (32 chunks) |
+|---|---|---|
+| release: `hv_vm_unmap` | 708 / 708 | 4667 / 4833 |
+| release: `MADV_FREE_REUSABLE` | 208 / 208 | 2333 / 2333 |
+| refault: run until fault exit | 792 / 792 | 833 / 833 |
+| refault: `MADV_FREE_REUSE` | 167 / 167 | 1958 / 1958 |
+| refault: `hv_vm_map` | 458 / 458 | 458 / 458 |
+| refault: re-run, store, HVC | 1625 / 1625 | 1667 / 1667 |
+| **refault: total** | **3042 / 3042** | **4958 / 4917** |
+
+p99 for the 16 KiB refault total was 4.1-4.2 µs.
+
+### Findings
+
+1. **Anonymous pages that are in stage 2 cannot be released with `madvise`.**
+   `MADV_FREE_REUSABLE` and `MADV_DONTNEED` succeed but the footprint does
+   not drop and the guest still sees the data. After `hv_vm_unmap` the same
+   calls release the pages at once. This confirms the design rule for
+   anonymous memory: decommit is unmap, release, remap on fault.
+2. **Neither `madvise` zeroes anonymous memory.** With no memory pressure
+   the old contents are still there after `MADV_FREE_REUSABLE` or
+   `MADV_DONTNEED`, for host and guest. Linux `MADV_DONTNEED` semantics
+   (reads return zero) do not hold. A decommitted page that is later handed to
+   another guest allocation must be zeroed explicitly, or replaced with a new
+   mapping (`mmap MAP_FIXED`).
+3. **`F_PUNCHHOLE` on an APFS file works while the range is in stage 2.**
+   Disk blocks are freed, and host and guest both read zeros right away,
+   without a fault and without `hv_vm_unmap`. Stage 2 follows the file's
+   pages, as with truncate in probe 5. For file memory, decommit can be a
+   single `F_PUNCHHOLE`, and it gives Linux-like zero-fill.
+4. File memory is not counted in `phys_footprint`, but a `MAP_SHARED` file on
+   APFS is written back to disk: `st_blocks` grows with guest writes after
+   `msync`, and the kernel also writes dirty pages back without `msync`. A
+   disk file as the guest memory file trades footprint accounting for disk
+   I/O. `shm_open` memory cannot be punched (`EBADF`) and behaves like
+   anonymous memory for `madvise`.
+5. **Task memory accounting counts a page twice when both the host process
+   and the guest map it.** `phys_footprint`, `resident_size` and `internal`
+   go from 65.8 MiB to 129.8 MiB when the guest touches 64 MiB the host
+   already touched, or the reverse; the system free page count does not
+   change. The extra count goes away on `hv_vm_unmap`. Real memory use is not
+   doubled, but `phys_footprint` is what macOS uses for memory limits,
+   jetsam, and Activity Monitor. A Sentry that touches application memory
+   through its own mappings (copy-in/copy-out) will be reported at up to
+   twice its real use.
+6. Releasing one 16 KiB page costs about 0.9 µs and refaulting it about
+   3.0 µs (p50), about 4.5 HVC round trips. For 2 MiB chunks, release costs
+   about 7 µs and refault about 5 µs. `hv_vm_unmap` of pages that the guest
+   has touched costs 708 ns for 16 KiB and 4.7 µs for 2 MiB (about 33 ns
+   per page). Unmapping a range the guest never touched costs about 190 ns
+   (probe 5).
