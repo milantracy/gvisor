@@ -40,6 +40,14 @@ every writable register:
 - All other EL1/EL0 system registers, PAC keys, debug registers, X0-X30,
   Q0-Q31, FPCR and FPSR are set to 0.
 
+Timings taken in the first ~100 ms of a process can be up to 40% slower
+while the CPU clock ramps up (found in probe 5: the same guest access cost
+950 ns at process start and 695 ns after 300 ms of warm-up). Probe 1 warms up
+for 100,000 round trips and measures over seconds, so it is not affected.
+Probe 2 creates and destroys vCPUs from process start, which can explain part
+of its run-to-run spread (create p50 12.3 µs and 8.2 µs). Probes from probe 5
+on warm up for 300 ms before they time anything.
+
 Guest RAM is 1 MiB of anonymous memory mapped RWX at IPA `0x10000000`. The
 guest-to-host exit is `hvc #1` (immediate 0 is avoided because HVF can consume
 it as an SMCCC call).
@@ -369,3 +377,121 @@ Signal latency from `pthread_kill` to handler entry (ns):
    another thread.
 5. Signal delivery to a thread in `hv_vcpu_run` costs about 0.2-0.3 µs more
    than to a thread spinning in the host.
+
+## Probe 5: `hv_vm_map` with different host backings
+
+Source: `tools/hvf-probe/vm_map.c` and the `guest_memop` stub in
+`guest_loops.S` (one guest load or store per run, then `hvc #1`). Four modes,
+each in its own process: `main`, `eof`, `truncate`, `munmap`. Test files are
+in `$TMPDIR` on APFS. Each mapping is 64 KiB (4 host pages) unless stated.
+Two runs on 2026-11-06 gave the same semantic results.
+
+### Backings
+
+"host write → guest" is a host store (or `pwrite` for a read-only host
+mapping) followed by a guest load. "guest → host" is a guest store followed by
+a host load and, for files, `pread`.
+
+| Host backing | Guest flags | `hv_vm_map` | host write → guest | guest store → host / file | `pwrite` after map → guest |
+|---|---|---|---|---|---|
+| anonymous `MAP_PRIVATE` | RW | ok | visible | visible | - |
+| anonymous `MAP_SHARED` | RW | ok | visible | visible | - |
+| `shm_open`, `MAP_SHARED` | RW | ok | visible | visible | - |
+| file `O_RDWR`, `MAP_SHARED`, `PROT_READ\|PROT_WRITE` | RW | ok | visible | visible / visible | visible |
+| file `O_RDWR`, `MAP_SHARED`, `PROT_READ` | R | ok | visible | stage-2 permission fault (DFSC 0xf, WnR 1) | visible |
+| file `O_RDWR`, `MAP_SHARED`, `PROT_READ` | RW | ok | visible | **visible / visible** | visible |
+| file `O_RDONLY` (mode 0444), `MAP_SHARED`, `PROT_READ` | R | **`HV_ERROR`** | - | - | - |
+| file `O_RDONLY` (mode 0444), `MAP_SHARED`, `PROT_READ` | RW | `HV_ERROR` | - | - | - |
+| file `O_RDONLY` (mode 0444), `MAP_PRIVATE`, `PROT_READ` | RW | ok | visible | visible / file unchanged | - |
+| file `O_RDWR`, `MAP_PRIVATE` | RW | ok | visible | visible / file unchanged | not visible (page already copied) |
+
+A separate check also failed with `HV_ERROR` for `O_RDONLY` + `MAP_SHARED` with
+`READ|EXEC`, and succeeded for `O_RDONLY` + `MAP_PRIVATE` with `READ` only.
+
+### Aliases
+
+| Case | Result |
+|---|---|
+| One host VA range mapped at two IPAs | `hv_vm_map` ok; store via IPA 1 is visible via IPA 2 |
+| Two host `MAP_SHARED` mappings of one file range, at two IPAs | ok; store via IPA 1 is visible via IPA 2 and via host mapping 2 |
+
+### Rules
+
+| Case | Result |
+|---|---|
+| Host VA, IPA or size aligned to 4 KiB but not 16 KiB | `HV_BAD_ARGUMENT` |
+| Flags 0 (no access) | `HV_SUCCESS` |
+| Map over an IPA range that is already mapped | `HV_ERROR` |
+| Unmap one 16 KiB page in the middle of a mapping | ok; that page faults (DFSC 0x7 translation fault, exit IPA correct), the rest still works |
+| Map a different host page into the hole | ok |
+| One `hv_vm_unmap` across several separate mappings | `HV_SUCCESS` |
+| `hv_vm_protect` READ, guest store | stage-2 permission fault (DFSC 0x6 after `protect`, WnR 1); load ok |
+| `hv_vm_protect` 0, guest load | stage-2 fault (DFSC 0x6) |
+| `hv_vm_protect` back to RW | store ok |
+
+### Edge cases
+
+| Mode | Result |
+|---|---|
+| `eof`: 4-page `MAP_SHARED` mapping of a 1-page file | `hv_vm_map` ok. Page 0 works. Load and store past EOF exit with a stage-2 translation fault (DFSC 0x7). No `SIGBUS`, no hang. File size unchanged. |
+| `truncate`: `ftruncate` to 1 page while all 4 pages are mapped and touched by the guest | Page 3 load and store then exit with DFSC 0x7. Page 0 still works. `hv_vm_unmap` ok. |
+| `munmap`: host `munmap` of anonymous memory that is still mapped into the guest | `munmap` ok. **The guest still reads the old contents (0x77…), also after the host maps new memory at the same VA.** `hv_vm_unmap` ok afterwards. |
+
+### Costs
+
+After 300 ms of warm-up, host memory touched before mapping. Mean ns per call:
+
+| Size | `hv_vm_map` run 1 / 2 | `hv_vm_protect` run 1 / 2 | `hv_vm_unmap` run 1 / 2 |
+|---|---|---|---|
+| 16 KiB | 332 / 333 | 206 / 200 | 190 / 187 |
+| 2 MiB | 328 / 328 | 202 / 197 | 187 / 185 |
+| 64 MiB | 328 / 329 | 208 / 203 | 198 / 196 |
+
+Guest access to a 64 MiB region, one access per 16 KiB page, each access is
+one `hv_vcpu_run` ending in HVC. Mean ns per access over 4,096 pages:
+
+| Host memory | Access | First touch run 1 / 2 | Second pass run 1 / 2 | One page ×4096 run 1 / 2 |
+|---|---|---|---|---|
+| touched by host | load | 1868 / 1834 | 770 / 768 | 695 / 696 |
+| untouched | load | 1894 / 1948 | 756 / 758 | 709 / 700 |
+| untouched | store | 1853 / 1896 | 730 / 735 | 700 / 699 |
+
+A plain HVC round trip is about 683 ns (probe 1).
+
+### Findings
+
+1. **`hv_vm_map` is lazy.** Its cost (~330 ns) does not depend on size from
+   16 KiB to 64 MiB. Each page is entered into stage 2 on the first guest
+   access, which costs about 1.15 µs more than a later access. This cost is
+   the same whether or not the host has touched the page; zero-filling a new
+   16 KiB page is not the main cost. `hv_vm_protect` and `hv_vm_unmap` cost
+   about 200 ns, also independent of size.
+2. A mapped page costs nothing extra after its first access: one page or up
+   to 128 pages cycled cost the same as an HVC round trip. Cycling through
+   4,096 pages (64 MiB) adds about 60-75 ns per access (TLB misses).
+3. **`hv_vm_map` takes a reference to the memory object, not the host VA.**
+   After the host unmaps the range, the guest keeps the old pages, even when
+   the host maps new memory at the same VA. The Sentry must call
+   `hv_vm_unmap` before it unmaps or reuses host memory that is mapped into
+   the guest; otherwise host and guest silently see different memory.
+4. **A file truncate does reach stage 2.** Pages past the new EOF fault in
+   the guest (DFSC 0x7) instead of keeping stale data, and pages past EOF are
+   never mapped. A guest access to a truncated file region is a normal
+   stage-2 fault exit, not a host `SIGBUS`. So stage-2 mappings follow the
+   VM object's pages; they are not a separate pinned copy.
+5. **HVF checks the maximum protection of the host mapping, not the current
+   protection.** A `PROT_READ` mapping of a file opened `O_RDWR` can be mapped
+   RW into the guest, and guest stores reach the file. The process could
+   `mprotect` that mapping to RW itself, so this gives the guest nothing the
+   host process does not have. The guest flags passed to `hv_vm_map` are what
+   restrict the guest.
+6. **A `MAP_SHARED` mapping of a file opened `O_RDONLY` cannot be mapped into
+   the guest at all, not even read-only (`HV_ERROR`).** `MAP_PRIVATE` of the
+   same file works. For gVisor this means a read-only host file that the
+   Sentry maps into application memory needs an `O_RDWR` descriptor, or a
+   `MAP_PRIVATE` mapping (which does not see later changes to pages it has
+   copied), or a copy into the memory file.
+7. A 16 KiB-aligned host VA, IPA and size are required (`HV_BAD_ARGUMENT`
+   for 4 KiB alignment) with the default IPA granule. Mapping over a mapped
+   range fails (`HV_ERROR`); partial unmap and remapping of single pages
+   work, which is what an on-demand IPA registry needs.
