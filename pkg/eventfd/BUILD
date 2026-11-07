@@ -9,6 +9,8 @@ go_library(
     name = "eventfd",
     srcs = [
         "eventfd.go",
+        "eventfd_darwin.go",
+        "eventfd_linux.go",
         "eventfd_unsafe.go",
     ],
     importpath = "gvisor.dev/gvisor/pkg/eventfd",
