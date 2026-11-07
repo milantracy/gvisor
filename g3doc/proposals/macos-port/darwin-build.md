@@ -1,6 +1,8 @@
 # Building gVisor on macOS (darwin/arm64)
 
-Status: in progress. Apple M2 Max, macOS 26.6.2, Go 1.27.3.
+Status: busybox runs on the `hvf` platform (Phase 1 exit criterion, 2026-11-07).
+Apple M2 Max, macOS 26.6.2, Go 1.27.3. The code is on the
+`macos-port/prototype` branch; the commands below run in a checkout of it.
 
 ## Host setup
 

@@ -39,6 +39,20 @@ must not change.
 | `research_notes/go_darwin_apple_silicon_constraints.md` | Go-on-Darwin facts: libSystem syscalls, cgo-free bindings, 16 KiB pages, W^X, PAC, Rosetta, CI runners, codesign. |
 | `research_notes/prior_art_and_ecosystem.md` | maci0/gvisor fork, Noah, Carrick, Apple `container`, Lima/Docker Desktop, upstream issue #1270 and the Oct 2026 CNCF post. |
 
+## Branches
+
+All branches are on the `milantracy` remote and start from `master`.
+
+| Branch | What it has |
+|---|---|
+| `macos-port/research` | This directory: the feasibility study, notes, decisions, Phase 0 results, and status. |
+| `macos-port/probe` | `tools/hvf-probe/`: the Phase 0 C probes and the KVM counterpart of probe 1. `tools/hvf-probe/README.md` tells how to run them. |
+| `macos-port/prototype` | The implementation: darwin ports of the Linux-only packages, `pkg/hvf`, the `pagesize_16k` variant, the IPA registry, the `hvf` platform, and `runsc/hvfboot`. It is to be split into upstream PRs. |
+
+`macos-port/darwin-shims` has all three in one history, and
+`macos-port/phase0-probe` and `macos-port/darwin-build` are earlier snapshots.
+They are kept until the split is confirmed, and get no new commits.
+
 ## Decisions already made (do not re-litigate without new data)
 
 - Hypervisor.framework only, Apple Silicon (arm64) only. ptrace and systrap cannot be ported; Intel Macs are end-of-life.
@@ -55,12 +69,12 @@ must not change.
 
 Phase 0 probes 1-10 are done (2026-11-06, Apple M2 Max, macOS 26.6.2). The
 results and a summary are in `phase0-results.md`; the probes are in
-`tools/hvf-probe/` on the `macos-port/phase0-probe` branch. Still open: the
+`tools/hvf-probe/` on the `macos-port/probe` branch. Still open: the
 KVM comparison for probe 1 on an arm64 Linux host (`tools/hvf-probe/kvm/`),
 and the design doc on google/gvisor#1270. The A/B decision is (B).
 
-The darwin build is in progress on `macos-port/darwin-shims` (`darwin-build.md`
-has the host setup and the list of failing packages). Native Bazel works on the
+The implementation is on `macos-port/prototype` (`darwin-build.md` has the
+host setup and the build history). Native Bazel works on the
 Mac. The first and second layers are done (see the progress table in
 `darwin-build.md`); package tests run on darwin, and flipcall uses
 `os_sync_wait_on_address`. `pgalloc` decommits with `F_PUNCHHOLE` (registry
@@ -97,34 +111,26 @@ MacBook:
 9. Cost of a `CPACR_EL1.FPEN` trap taken as a host exit.
 10. Sanity checks: `TCR_EL1.TG0=4K` and `=16K` from a cold vCPU; `hv_vm_config_get_max_ipa_size`.
 
-Suggested layout: `tools/hvf-probe/` on the `macos-port/phase0-probe` branch of
-this fork, with a `Makefile` that builds, signs (`codesign -s - --entitlements
-hvf.entitlements`) and runs each probe and writes results to
-`g3doc/proposals/macos-port/phase0-results.md`.
+The probes are in `tools/hvf-probe/` on the `macos-port/probe` branch. Its
+`Makefile` builds, signs (`codesign -s - --entitlements hvf.entitlements`) and
+runs each probe. The results are in `phase0-results.md`.
 
 ## Prompt to paste into Claude Code on the MacBook
 
-Start Claude Code inside the gVisor fork checkout on the `macos-port/research`
-branch (or a worktree of it) and paste:
+Start Claude Code inside the gVisor fork checkout and paste:
 
 ```
-I am continuing the gVisor-on-macOS work. Read g3doc/proposals/macos-port/RESUME.md
-first, then g3doc/proposals/macos-port/feasibility-report.md. The design decisions
-in RESUME.md are settled; do not re-open them without new measurements.
+I am continuing the gVisor-on-macOS work. Read RESUME.md first, then
+feasibility-report.md, both in g3doc/proposals/macos-port/ on the
+macos-port/research branch. The design decisions in RESUME.md are settled; do
+not re-open them without new measurements.
 
-Today's goal is Phase 0: the C probe described in RESUME.md. Steps:
-1. Run `sw_vers; sysctl kern.hv_support hw.pagesize machdep.cpu.brand_string;
-   xcode-select -p; go version` and confirm kern.hv_support is 1.
-2. Create a git worktree on a new branch macos-port/phase0-probe from
-   macos-port/research. Never edit on master.
-3. Build the probe under tools/hvf-probe/ one measurement at a time, starting with
-   hv_vcpu_run round-trip latency. Each probe is a small C program, ad-hoc signed
-   with the com.apple.security.hypervisor entitlement via a Makefile target.
-   Use hvc #imm with imm != 0 for the guest-to-host exit, program every system
-   register yourself (HVF has no vCPU reset state), and set the EL via HV_REG_CPSR.
-4. Record every number with the chip model and macOS version in
-   g3doc/proposals/macos-port/phase0-results.md as you go.
-5. Commit after each working probe and push to the milantracy remote.
+1. Use a git worktree for each branch: macos-port/prototype for code,
+   macos-port/research for docs, macos-port/probe for probes. Never edit on
+   master.
+2. The next steps are in the Status section of RESUME.md.
+3. Commit each working step on its branch and push to the milantracy remote.
+   Keep RESUME.md and darwin-build.md on macos-port/research current.
 Ask me before anything that needs sudo or a developer account.
 ```
 

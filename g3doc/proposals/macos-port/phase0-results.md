@@ -1,9 +1,9 @@
 # Phase 0 results: Hypervisor.framework probes
 
 This file records the measurements of the Phase 0 probe listed in
-`RESUME.md`. The probe sources are in `tools/hvf-probe/`. Each probe is a C
-program, ad-hoc signed with the `com.apple.security.hypervisor` entitlement
-(`make run-<probe>`).
+`RESUME.md`. The probe sources are in `tools/hvf-probe/` on the
+`macos-port/probe` branch. Each probe is a C program, ad-hoc signed with the
+`com.apple.security.hypervisor` entitlement (`make run-<probe>`).
 
 ## Test machine
 
@@ -54,7 +54,8 @@ it as an SMCCC call).
 
 ## Probe 1: `hv_vcpu_run` round-trip latency
 
-Source: `tools/hvf-probe/vcpu_run.c`, `vcpu_run_guest.S`.
+Source: `tools/hvf-probe/vcpu_run.c`, and `guest_clean` and `guest_fpdirty`
+in `guest_loops.S`.
 
 The guest loop is `hvc #1; b loop`. One round trip is one `hv_vcpu_run` call
 that enters the guest, executes the HVC and returns to the host. The mean is
