@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -94,7 +95,16 @@ func pwritePage(t *testing.T, f *MemoryFile, fr memmap.FileRange, page int, b by
 	}
 }
 
+// seekDataSeesDirtyPages is true if SEEK_DATA on the test's memory file sees
+// pages that are dirty in the page cache. On darwin, APFS does not report
+// pages that are written through a mapping until they are written back, so
+// pgalloc does not use SEEK_DATA there.
+var seekDataSeesDirtyPages = runtime.GOOS == "linux"
+
 func TestHostFileDataSeeker(t *testing.T) {
+	if !seekDataSeesDirtyPages {
+		t.Skip("SEEK_DATA does not see dirty pages on this host")
+	}
 	f := newSaveTestMemoryFile(t, "", true /* diskBacked */)
 	fr := allocateSaveTestPages(t, f)
 	pwritePage(t, f, fr, 2, 1)
@@ -304,6 +314,9 @@ func TestSaveToExitAfterSaving(t *testing.T) {
 			}
 			if got, want := f.knownCommittedBytes, uint64(hostarch.PageSize); got != want {
 				t.Errorf("knownCommittedBytes: got %d, want %d", got, want)
+			}
+			if !seekDataSeesDirtyPages {
+				return
 			}
 			off := int64(fr.Start) + 5*int64(hostarch.PageSize)
 			data, err := unix.Seek(f.FD(), off, unix.SEEK_DATA)
