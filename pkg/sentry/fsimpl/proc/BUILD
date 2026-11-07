@@ -1,5 +1,8 @@
 load("//pkg/sync/locking:locking.bzl", "declare_rwmutex")
-load("//tools:defs.bzl", "go_library", "go_test")
+# The go_library rule is imported as a different name in this case,
+# in order to avoid automated tooling doing the wrong thing with the
+# operating-specific dependencies listed below.
+load("//tools:defs.bzl", "go_test", "select_system", exempt_go_library = "go_library")
 load("//tools/go_generics:defs.bzl", "go_template_instance")
 
 package(default_applicable_licenses = ["//:license"])
@@ -68,7 +71,7 @@ declare_rwmutex(
     prefix = "dentries",
 )
 
-go_library(
+exempt_go_library(
     name = "proc",
     srcs = [
         "checkpoint.go",
@@ -77,7 +80,8 @@ go_library(
         "fd_info_dir_inode_refs.go",
         "filesystem.go",
         "keys.go",
-        "nvproxy.go",
+        "nvproxy_darwin.go",
+        "nvproxy_linux.go",
         "save_restore.go",
         "subtasks.go",
         "subtasks_inode_refs.go",
@@ -104,7 +108,6 @@ go_library(
         "//pkg/rand",
         "//pkg/refs",
         "//pkg/safemem",
-        "//pkg/sentry/devices/nvproxy",
         "//pkg/sentry/fsimpl/kernfs",
         "//pkg/sentry/fsimpl/lock",
         "//pkg/sentry/fsimpl/nsfs",
@@ -129,7 +132,12 @@ go_library(
         "//pkg/tcpip/network/ipv6",
         "//pkg/usermem",
         "//pkg/waiter",
-    ],
+    ] + select_system(
+        darwin = [],
+        linux = ["//pkg/sentry/devices/nvproxy"],
+    ),
+    # deps has a select, so "//pkg/state" cannot be looked up in it.
+    force_add_state_pkg = True,
 )
 
 go_test(
