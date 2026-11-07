@@ -10,6 +10,7 @@ go_library(
         "ctrl_futex.go",
         "flipcall.go",
         "flipcall_unsafe.go",
+        "futex_darwin.go",
         "futex_linux.go",
         "io.go",
         "packet_window.go",
@@ -34,5 +35,6 @@ go_test(
         "flipcall_test.go",
     ],
     embed = [":flipcall"],
+    target_compatible_with = ["@platforms//os:linux"],
     deps = ["//pkg/sync"],
 )
