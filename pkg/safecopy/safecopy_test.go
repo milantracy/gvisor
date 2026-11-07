@@ -568,14 +568,17 @@ func TestCompareAndSwapUint32BusError(t *testing.T) {
 	})
 }
 
+// nilInt is nil. It is a package variable so that the nilness analyzer does not
+// report the dereference in TestFaultOutsideSafecopyReachesGoRuntime.
+var nilInt *int
+
 func TestFaultOutsideSafecopyReachesGoRuntime(t *testing.T) {
 	// A fault that is not in a safecopy function goes to the previous
 	// handler, so the Go runtime turns it into a recoverable panic.
-	var p *int
 	defer func() {
 		if r := recover(); r == nil {
 			t.Errorf("nil dereference did not panic")
 		}
 	}()
-	_ = *p
+	_ = *nilInt
 }
