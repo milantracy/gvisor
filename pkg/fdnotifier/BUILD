@@ -9,6 +9,8 @@ go_library(
     name = "fdnotifier",
     srcs = [
         "fdnotifier.go",
+        "fdnotifier_darwin.go",
+        "poll_darwin.go",
         "poll_unsafe.go",
     ],
     visibility = ["//:sandbox"],
@@ -22,7 +24,10 @@ go_library(
 go_test(
     name = "fdnotifier_test",
     size = "small",
-    srcs = ["startup_test.go"],
+    srcs = [
+        "notify_test.go",
+        "startup_test.go",
+    ],
     embed = [":fdnotifier"],
     deps = [
         "//pkg/waiter",
