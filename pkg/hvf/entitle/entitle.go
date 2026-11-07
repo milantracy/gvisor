@@ -16,6 +16,7 @@
 package entitle
 
 import (
+	_ "embed" // For Entitlements.
 	"errors"
 	"fmt"
 	"os"
@@ -28,20 +29,15 @@ const SignedEnv = "HVF_SIGNED"
 
 // Entitlements is a property list with the com.apple.security.hypervisor
 // entitlement.
-const Entitlements = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>com.apple.security.hypervisor</key>
-	<true/>
-</dict>
-</plist>
-`
+//
+//go:embed hypervisor.entitlements
+var Entitlements string
 
 // Reexec runs a copy of the current binary, ad-hoc signed with the
 // hypervisor entitlement, with the same arguments, standard I/O, and
 // environment plus SignedEnv. It returns the exit code of the copy. Signing
-// needs no developer account.
+// needs no developer account. A binary that is signed at build time with
+// hvf_signed_binary (defs.bzl) does not need Reexec.
 func Reexec() (int, error) {
 	exe, err := os.Executable()
 	if err != nil {
