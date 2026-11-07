@@ -48,7 +48,7 @@ func socketType(packet bool) int {
 // socket creates a new host socket.
 func socket(packet bool) (int, error) {
 	// Make a new socket.
-	fd, err := unix.Socket(unix.AF_UNIX, socketType(packet)|unix.SOCK_CLOEXEC, 0)
+	fd, err := newSocket(socketType(packet))
 	if err != nil {
 		return 0, err
 	}
@@ -190,7 +190,7 @@ func (s *Socket) enterFD() (int, bool) {
 // SocketPair creates a pair of connected sockets.
 func SocketPair(packet bool) (*Socket, *Socket, error) {
 	// Make a new pair.
-	fds, err := unix.Socketpair(unix.AF_UNIX, socketType(packet)|unix.SOCK_CLOEXEC, 0)
+	fds, err := newSocketPair(socketType(packet))
 	if err != nil {
 		return nil, nil, err
 	}
