@@ -81,10 +81,14 @@ func setupVM(t testing.TB) {
 }
 
 // newGuest maps code at a new IPA and returns a vCPU at EL1h with the MMU off
-// that starts at the first instruction. The caller must lock the goroutine to
-// its thread.
+// that starts at the first instruction. It locks the goroutine to its thread
+// until the test ends, because a vCPU can only be used and destroyed on the
+// thread that created it.
 func newGuest(t testing.TB, code ...uint32) *VCPU {
 	t.Helper()
+	runtime.LockOSThread()
+	// Cleanups run in reverse order, so this runs after Destroy.
+	t.Cleanup(runtime.UnlockOSThread)
 	setupVM(t)
 	mem, err := unix.Mmap(-1, 0, pageSize, unix.PROT_READ|unix.PROT_WRITE, unix.MAP_ANON|unix.MAP_PRIVATE)
 	if err != nil {
@@ -121,8 +125,6 @@ func newGuest(t testing.TB, code ...uint32) *VCPU {
 }
 
 func TestHVC(t *testing.T) {
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
 	v := newGuest(t, movzX0(0x1234), insnAddX0, insnHVC1, insnBSelf)
 	if err := v.Run(); err != nil {
 		t.Fatalf("Run: %v", err)
@@ -141,8 +143,6 @@ func TestHVC(t *testing.T) {
 }
 
 func TestRegisters(t *testing.T) {
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
 	v := newGuest(t, insnBSelf)
 	if err := v.SetReg(RegX0+7, 0xdeadbeef); err != nil {
 		t.Fatalf("SetReg: %v", err)
@@ -169,8 +169,6 @@ func TestRegisters(t *testing.T) {
 }
 
 func TestExitVCPUs(t *testing.T) {
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
 	v := newGuest(t, insnBSelf)
 	id := v.ID()
 	timer := time.AfterFunc(20*time.Millisecond, func() {
@@ -203,8 +201,6 @@ func TestMapErrors(t *testing.T) {
 
 // BenchmarkHVCRoundTrip measures one guest HVC exit and re-entry.
 func BenchmarkHVCRoundTrip(b *testing.B) {
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
 	v := newGuest(b, insnHVC1, insnBBack1)
 	for b.Loop() {
 		if err := v.Run(); err != nil {
