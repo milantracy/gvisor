@@ -36,9 +36,10 @@ type ptChunk struct {
 	ipa  uint64
 }
 
-// allocator is a pagetables.Allocator that allocates page tables in memory
-// that the guest can walk: anonymous host memory that the registry maps.
-type allocator struct {
+// ptMemory is the page table memory of a VM: anonymous host memory that the
+// registry maps, so that the guest can walk the page tables in it. Each page
+// table set gets its pages through an allocator.
+type ptMemory struct {
 	registry *ipa.Registry
 
 	mu sync.Mutex
@@ -48,28 +49,25 @@ type allocator struct {
 	// next and end are the unused part of the last chunk.
 	// +checklocks:mu
 	next, end uintptr
+	// pool has free pages. All their entries are zero.
 	// +checklocks:mu
 	pool []*pagetables.PTEs
-	// +checklocks:mu
-	freed []*pagetables.PTEs
 }
 
-var _ pagetables.Allocator = (*allocator)(nil)
-
-func newAllocator(registry *ipa.Registry) *allocator {
-	return &allocator{registry: registry}
+func newPTMemory(registry *ipa.Registry) *ptMemory {
+	return &ptMemory{registry: registry}
 }
 
-// +checklocks:a.mu
-func (a *allocator) newChunk() {
+// +checklocks:m.mu
+func (m *ptMemory) newChunk() {
 	mem, err := unix.Mmap(-1, 0, ptChunkSize, unix.PROT_READ|unix.PROT_WRITE, unix.MAP_ANON|unix.MAP_PRIVATE)
 	if err != nil {
 		panic(fmt.Sprintf("hvf: allocating page table memory: %v", err))
 	}
 	host := uintptr(unsafe.Pointer(&mem[0]))
 	var parts int
-	if err := a.registry.Translate(host, ptChunkSize, ipa.Read|ipa.Write, func(addr uintptr, ipa uint64, length uintptr) {
-		a.chunks = append(a.chunks, ptChunk{host: addr, ipa: ipa})
+	if err := m.registry.Translate(host, ptChunkSize, ipa.Read|ipa.Write, func(addr uintptr, ipa uint64, length uintptr) {
+		m.chunks = append(m.chunks, ptChunk{host: addr, ipa: ipa})
 		parts++
 	}); err != nil {
 		panic(fmt.Sprintf("hvf: mapping page table memory: %v", err))
@@ -77,33 +75,41 @@ func (a *allocator) newChunk() {
 	if parts != 1 {
 		panic(fmt.Sprintf("hvf: page table memory has %d IPA parts", parts))
 	}
-	a.next, a.end = host, host+ptChunkSize
+	m.next, m.end = host, host+ptChunkSize
 }
 
-// NewPTEs implements pagetables.Allocator.NewPTEs.
-func (a *allocator) NewPTEs() *pagetables.PTEs {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if n := len(a.pool); n > 0 {
-		ptes := a.pool[n-1]
-		a.pool = a.pool[:n-1]
+// get returns a page with all entries zero.
+func (m *ptMemory) get() *pagetables.PTEs {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if n := len(m.pool); n > 0 {
+		ptes := m.pool[n-1]
+		m.pool = m.pool[:n-1]
 		return ptes
 	}
-	if a.next == a.end {
-		a.newChunk()
+	if m.next == m.end {
+		m.newChunk()
 	}
-	ptes := (*pagetables.PTEs)(unsafe.Pointer(a.next))
-	a.next += hostarch.PageSize
+	ptes := (*pagetables.PTEs)(unsafe.Pointer(m.next))
+	m.next += hostarch.PageSize
 	return ptes
 }
 
-// PhysicalFor implements pagetables.Allocator.PhysicalFor. It returns the IPA
-// of ptes.
-func (a *allocator) PhysicalFor(ptes *pagetables.PTEs) uintptr {
+// put zeroes pages and returns them to the pool. No vCPU may walk them.
+func (m *ptMemory) put(pages []*pagetables.PTEs) {
+	for _, ptes := range pages {
+		*ptes = pagetables.PTEs{}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pool = append(m.pool, pages...)
+}
+
+func (m *ptMemory) physicalFor(ptes *pagetables.PTEs) uintptr {
 	addr := uintptr(unsafe.Pointer(ptes))
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	for _, c := range a.chunks {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, c := range m.chunks {
 		if addr >= c.host && addr-c.host < ptChunkSize {
 			return uintptr(c.ipa) + (addr - c.host)
 		}
@@ -111,16 +117,62 @@ func (a *allocator) PhysicalFor(ptes *pagetables.PTEs) uintptr {
 	panic(fmt.Sprintf("hvf: PTEs %#x are not in page table memory", addr))
 }
 
-// LookupPTEs implements pagetables.Allocator.LookupPTEs.
-func (a *allocator) LookupPTEs(physical uintptr) *pagetables.PTEs {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	for _, c := range a.chunks {
+func (m *ptMemory) lookupPTEs(physical uintptr) *pagetables.PTEs {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, c := range m.chunks {
 		if uint64(physical) >= c.ipa && uint64(physical)-c.ipa < ptChunkSize {
 			return (*pagetables.PTEs)(unsafe.Pointer(c.host + (physical - uintptr(c.ipa))))
 		}
 	}
 	panic(fmt.Sprintf("hvf: IPA %#x is not in page table memory", physical))
+}
+
+// allocator is the pagetables.Allocator of one page table set. It knows the
+// pages that the set uses, so that it can return a freed page to ptMemory
+// only after the TLB shootdown that follows the change, and return all pages
+// when the set is released.
+type allocator struct {
+	mem *ptMemory
+
+	mu sync.Mutex
+	// live has the pages that the page tables use, and freed pages that are
+	// not yet returned to mem.
+	// +checklocks:mu
+	live map[*pagetables.PTEs]struct{}
+	// freed has the pages that the page tables no longer use. A vCPU can
+	// still walk them until the next TLB shootdown.
+	// +checklocks:mu
+	freed []*pagetables.PTEs
+}
+
+var _ pagetables.Allocator = (*allocator)(nil)
+
+func newAllocator(mem *ptMemory) *allocator {
+	return &allocator{
+		mem:  mem,
+		live: make(map[*pagetables.PTEs]struct{}),
+	}
+}
+
+// NewPTEs implements pagetables.Allocator.NewPTEs.
+func (a *allocator) NewPTEs() *pagetables.PTEs {
+	ptes := a.mem.get()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.live[ptes] = struct{}{}
+	return ptes
+}
+
+// PhysicalFor implements pagetables.Allocator.PhysicalFor. It returns the IPA
+// of ptes.
+func (a *allocator) PhysicalFor(ptes *pagetables.PTEs) uintptr {
+	return a.mem.physicalFor(ptes)
+}
+
+// LookupPTEs implements pagetables.Allocator.LookupPTEs.
+func (a *allocator) LookupPTEs(physical uintptr) *pagetables.PTEs {
+	return a.mem.lookupPTEs(physical)
 }
 
 // FreePTEs implements pagetables.Allocator.FreePTEs.
@@ -130,12 +182,42 @@ func (a *allocator) FreePTEs(ptes *pagetables.PTEs) {
 	a.freed = append(a.freed, ptes)
 }
 
-// Recycle implements pagetables.Allocator.Recycle.
-func (a *allocator) Recycle() {
+// Recycle implements pagetables.Allocator.Recycle. The page tables do not
+// call it; takeFreed and release do its work.
+func (a *allocator) Recycle() {}
+
+// takeFreed returns the pages freed since the last call. They can be
+// returned with release after the next TLB shootdown completes.
+func (a *allocator) takeFreed() []*pagetables.PTEs {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.pool = append(a.pool, a.freed...)
-	a.freed = a.freed[:0]
+	freed := a.freed
+	a.freed = nil
+	for _, ptes := range freed {
+		delete(a.live, ptes)
+	}
+	return freed
+}
+
+// release returns pages taken with takeFreed to ptMemory.
+func (a *allocator) release(pages []*pagetables.PTEs) {
+	if len(pages) > 0 {
+		a.mem.put(pages)
+	}
+}
+
+// drain returns all pages of the page tables to ptMemory. The page tables
+// must not be used again, and no vCPU may walk them.
+func (a *allocator) drain() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	pages := make([]*pagetables.PTEs, 0, len(a.live))
+	for ptes := range a.live {
+		pages = append(pages, ptes)
+	}
+	a.live = nil
+	a.freed = nil
+	a.mem.put(pages)
 }
 
 // newStubPage maps the guest EL1 code into the IPA space and returns its IPA.

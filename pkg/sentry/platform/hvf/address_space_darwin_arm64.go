@@ -44,16 +44,21 @@ type addressSpace struct {
 	mu sync.Mutex
 	pt *pagetables.PageTables
 
+	// alloc is the allocator of pt.
+	alloc *allocator
+
 	// gen is incremented after each change to pt. A vCPU that last ran
 	// this address space at an older generation invalidates its TLB.
 	gen atomicbitops.Uint64
 }
 
 func newAddressSpace(p *HVF) *addressSpace {
+	alloc := newAllocator(p.ptMem)
 	return &addressSpace{
-		p:  p,
-		id: nextAddressSpaceID.Add(1),
-		pt: pagetables.NewWithUpper(p.alloc, p.kernel, upperBottom),
+		p:     p,
+		id:    nextAddressSpaceID.Add(1),
+		pt:    pagetables.NewWithUpper(alloc, p.kernel, upperBottom),
+		alloc: alloc,
 	}
 }
 
@@ -78,8 +83,10 @@ func (as *addressSpace) MapFile(addr hostarch.Addr, f memmap.File, fr memmap.Fil
 	}
 	as.mu.Lock()
 	defer func() {
+		freed := as.alloc.takeFreed()
 		as.mu.Unlock()
 		as.changed()
+		as.alloc.release(freed)
 	}()
 	va := uintptr(addr)
 	for !bs.IsEmpty() {
@@ -119,8 +126,10 @@ func (as *addressSpace) mapRange(va, length uintptr, ipa uint64, opts pagetables
 func (as *addressSpace) Unmap(addr hostarch.Addr, length uint64) {
 	as.mu.Lock()
 	as.pt.Unmap(addr, uintptr(length))
+	freed := as.alloc.takeFreed()
 	as.mu.Unlock()
 	as.changed()
+	as.alloc.release(freed)
 }
 
 // changed bumps the generation and waits until no vCPU runs the address
@@ -143,12 +152,16 @@ func (as *addressSpace) changed() {
 	}
 }
 
-// Release implements platform.AddressSpace.Release.
+// Release implements platform.AddressSpace.Release. It returns all page
+// table pages, including the root, to the page table memory.
 func (as *addressSpace) Release() {
 	as.mu.Lock()
 	defer as.mu.Unlock()
-	as.pt.Unmap(0, maxUserAddress)
-	as.pt.Allocator.Recycle()
+	// No task runs in as any more, so changed only waits for a vCPU that has
+	// not left the guest yet.
+	as.changed()
+	as.alloc.drain()
+	as.pt = nil
 }
 
 // PreFork implements platform.AddressSpace.PreFork.

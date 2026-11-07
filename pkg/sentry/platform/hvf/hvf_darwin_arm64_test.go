@@ -226,6 +226,50 @@ func TestUndefinedInstruction(t *testing.T) {
 	}
 }
 
+// inUse returns the number of page table pages that are not free.
+func (m *ptMemory) inUse() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.chunks)*ptChunkSize/hostarch.PageSize - int(m.end-m.next)/hostarch.PageSize - len(m.pool)
+}
+
+// TestPageTablePages checks that Unmap returns the page table pages that it
+// frees, and that Release returns all pages of an address space, including
+// the root.
+func TestPageTablePages(t *testing.T) {
+	e := newTestEnv(t)
+	fr := e.allocate(t, []byte{1})
+	// Addresses that are in different tables at every level.
+	addrs := []hostarch.Addr{0x400000, 1 << 36, 1 << 46}
+	base := e.p.ptMem.inUse()
+	for i := 0; i < 50; i++ {
+		as, err := e.p.NewAddressSpace(platform.AddressSpaceOptions{})
+		if err != nil {
+			t.Fatalf("NewAddressSpace: %v", err)
+		}
+		empty := e.p.ptMem.inUse()
+		for _, addr := range addrs {
+			if err := as.MapFile(addr, e.mf, fr, hostarch.Read, false); err != nil {
+				t.Fatalf("MapFile(%#x): %v", addr, err)
+			}
+		}
+		// pagetables frees a table only when the range covers all of it.
+		as.Unmap(0, maxUserAddress)
+		if got := e.p.ptMem.inUse(); got != empty {
+			t.Fatalf("after Unmap: %d pages in use, want %d", got, empty)
+		}
+		for _, addr := range addrs {
+			if err := as.MapFile(addr, e.mf, fr, hostarch.Read, false); err != nil {
+				t.Fatalf("MapFile(%#x): %v", addr, err)
+			}
+		}
+		as.Release()
+	}
+	if got := e.p.ptMem.inUse(); got != base {
+		t.Errorf("after Release: %d pages in use, want %d", got, base)
+	}
+}
+
 // BenchmarkSyscall measures a system call through Switch.
 func BenchmarkSyscall(b *testing.B) {
 	e := newTestEnv(b)

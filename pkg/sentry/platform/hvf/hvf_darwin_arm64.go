@@ -51,7 +51,7 @@ type HVF struct {
 	platform.UseHostGlobalMemoryBarrier
 
 	registry *ipa.Registry
-	alloc    *allocator
+	ptMem    *ptMemory
 
 	// kernel has the TTBR1 page tables, which map the stub page.
 	kernel *pagetables.PageTables
@@ -90,12 +90,12 @@ func newHVF() (*HVF, error) {
 		work:     make(chan *switchRequest),
 	}
 	memutil.SetMappingObserver(p.registry)
-	p.alloc = newAllocator(p.registry)
+	p.ptMem = newPTMemory(p.registry)
 	stubIPA, err := newStubPage(p.registry)
 	if err != nil {
 		return nil, fmt.Errorf("mapping the stub page: %w", err)
 	}
-	p.kernel = pagetables.New(p.alloc)
+	p.kernel = pagetables.New(newAllocator(p.ptMem))
 	p.kernel.Map(stubVA, hostarch.PageSize, pagetables.MapOpts{
 		AccessType: hostarch.ReadExecute,
 		Global:     true,
