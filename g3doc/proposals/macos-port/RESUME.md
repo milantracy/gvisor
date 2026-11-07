@@ -65,8 +65,10 @@ Mac. The first and second layers are done (see the progress table in
 `darwin-build.md`); package tests run on darwin, and flipcall uses
 `os_sync_wait_on_address`. `pgalloc` decommits with `F_PUNCHHOLE` (registry
 requirement 7). All 12 demo-path targets build on darwin (2026-11-07). Host
-TTYs are not supported yet (stdio as pipes or files). Next: step 2, the
-`pkg/hvf` binding, then the `hvf` platform.
+TTYs are not supported yet (stdio as pipes or files). `pkg/hvf`, the
+cgo-free Hypervisor.framework binding, is done; its test runs guest code and
+an HVC round trip costs about 720 ns from Go (2026-11-07). Next: the
+`pagesize_16k` variant, the IPA registry, then the `hvf` platform.
 
 ## Phase 0 probe plan (done)
 
