@@ -17,7 +17,7 @@ components on the Mac and runs Linux programs in it. Agreed on 2026-11-06.
 | Launcher | `runsc` | A small darwin command that boots the Sentry and runs one program | 1 |
 | Root filesystem | Gofer, EROFS, overlay | EROFS image | 1 |
 | Host files | Gofer process with directfs | A darwin gofer process | 2 |
-| Networking | netstack with host link endpoints | netstack with a user-space proxy or vmnet | 2 |
+| Networking | netstack with host link endpoints | netstack with a packet link to a user-space proxy process (`hvfboot net`); vmnet needs root or a restricted entitlement | 2 |
 | Sentry confinement | seccomp and namespaces | Seatbelt profile and a separate gofer process | 2 |
 | `runsc`-style CLI | `runsc run`, OCI | Grows from the launcher as Phase 2 lands | 2 and later |
 
