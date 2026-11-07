@@ -8,6 +8,8 @@ go_library(
     name = "eventfd",
     srcs = [
         "eventfd.go",
+        "eventfd_darwin.go",
+        "eventfd_linux.go",
         "save_restore.go",
     ],
     importpath = "gvisor.dev/gvisor/pkg/sentry/fsimpl/eventfd",

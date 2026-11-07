@@ -138,7 +138,7 @@ func (efd *EventFileDescription) HostFD() (int, error) {
 	// eventfd2 accepts a 32-bit initial value, but writes can raise the
 	// counter above that before a device asks for a host fd.
 	initVal := uint32(efd.val)
-	fd, err := unix.Eventfd(uint(initVal), flags)
+	fd, err := newHostEventfd(initVal, flags)
 	if err != nil {
 		return -1, err
 	}
