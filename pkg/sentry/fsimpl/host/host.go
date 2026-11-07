@@ -107,22 +107,6 @@ func (v *virtualOwner) atomicMode() uint32 {
 	return v.mode.Load()
 }
 
-func isEpollable(fd int) bool {
-	epollfd, err := unix.EpollCreate1(0)
-	if err != nil {
-		// This shouldn't happen. If it does, just say file doesn't support epoll.
-		return false
-	}
-	defer unix.Close(epollfd)
-
-	event := unix.EpollEvent{
-		Fd:     int32(fd),
-		Events: unix.EPOLLIN,
-	}
-	err = unix.EpollCtl(epollfd, unix.EPOLL_CTL_ADD, fd, &event)
-	return err == nil
-}
-
 // inode implements kernfs.Inode.
 //
 // +stateify savable
@@ -252,7 +236,7 @@ func newInode(ctx context.Context, fs *filesystem, hostFD int, savable bool, res
 		ino:        fs.NextIno(),
 		ftype:      uint16(fileType),
 		devMinor:   fs.devMinor,
-		epollable:  isEpollable(hostFD),
+		epollable:  isPollable(hostFD),
 		seekable:   seekable,
 		savable:    savable,
 		restoreKey: restoreKey,
@@ -331,30 +315,29 @@ func NewFD(ctx context.Context, mnt *vfs.Mount, hostFD int, opts *NewFDOptions) 
 			return nil, fmt.Errorf("readonly file descriptor may currently not be a TTY")
 		}
 
-		flagsInt, err := unix.FcntlInt(uintptr(hostFD), unix.F_GETFL, 0)
+		hostFlags, err := hostOpenFlags(hostFD)
 		if err != nil {
 			return nil, err
 		}
-		accessMode := uint32(flagsInt) & unix.O_ACCMODE
-		if accessMode != unix.O_RDONLY {
+		if hostFlags&linux.O_ACCMODE != linux.O_RDONLY {
 			return nil, fmt.Errorf("readonly file descriptor may only be opened as O_RDONLY on the host")
 		}
 	}
 
 	// Retrieve metadata.
-	var stat unix.Stat_t
-	if err := unix.Fstat(hostFD, &stat); err != nil {
+	var stat hostStat
+	if err := fstat(hostFD, &stat); err != nil {
 		return nil, err
 	}
 
 	flags := opts.Flags
 	if !opts.HaveFlags {
 		// Get flags for the imported FD.
-		flagsInt, err := unix.FcntlInt(uintptr(hostFD), unix.F_GETFL, 0)
+		hostFlags, err := hostOpenFlags(hostFD)
 		if err != nil {
 			return nil, err
 		}
-		flags = uint32(flagsInt)
+		flags = hostFlags
 	}
 
 	fileType := linux.FileMode(stat.Mode).FileType()
@@ -451,16 +434,16 @@ func (fs *filesystem) MountOptions() string {
 
 // CheckPermissions implements kernfs.Inode.CheckPermissions.
 func (i *inode) CheckPermissions(ctx context.Context, creds *auth.Credentials, ats vfs.AccessTypes) error {
-	var s unix.Stat_t
+	var s hostStat
 	if err := i.stat(&s); err != nil {
 		return err
 	}
-	return vfs.GenericCheckPermissions(creds, ats, linux.FileMode(s.Mode), nil, auth.KUID(s.Uid), auth.KGID(s.Gid))
+	return vfs.GenericCheckPermissions(creds, ats, linux.FileMode(s.Mode), nil, auth.KUID(s.UID), auth.KGID(s.GID))
 }
 
 // Mode implements kernfs.Inode.Mode.
 func (i *inode) Mode() linux.FileMode {
-	var s unix.Stat_t
+	var s hostStat
 	if err := i.stat(&s); err != nil {
 		// Retrieving the mode from the host fd using fstat(2) should not fail.
 		// If the syscall does not succeed, something is fundamentally wrong.
@@ -488,92 +471,7 @@ func (i *inode) Stat(ctx context.Context, vfsfs *vfs.Filesystem, opts vfs.StatOp
 		return linux.Statx{}, linuxerr.EINVAL
 	}
 
-	// Limit our host call only to known flags.
-	mask := opts.Mask & linux.STATX_ALL
-	var s unix.Statx_t
-	err := unix.Statx(i.hostFD, "", int(unix.AT_EMPTY_PATH|opts.Sync), int(mask), &s)
-	if linuxerr.Equals(linuxerr.ENOSYS, err) {
-		// Fallback to fstat(2), if statx(2) is not supported on the host.
-		//
-		// TODO(b/151263641): Remove fallback.
-		return i.statxFromStat(i.devMinor)
-	}
-	if err != nil {
-		return linux.Statx{}, err
-	}
-
-	// Unconditionally fill blksize, attributes, and device numbers, as
-	// indicated by /include/uapi/linux/stat.h. Inode number is always
-	// available, since we use our own rather than the host's.
-	ls := linux.Statx{
-		Mask:           linux.STATX_INO,
-		Blksize:        s.Blksize,
-		Attributes:     s.Attributes,
-		Ino:            i.ino,
-		AttributesMask: s.Attributes_mask,
-		DevMajor:       linux.UNNAMED_MAJOR,
-		DevMinor:       i.devMinor,
-	}
-	// Clear STATX_ATTR_MOUNT_ROOT passed through from the host; the sentry VFS
-	// sets it from its own mounts.
-	ls.Attributes &^= linux.STATX_ATTR_MOUNT_ROOT
-	ls.AttributesMask &^= linux.STATX_ATTR_MOUNT_ROOT
-
-	// Copy other fields that were returned by the host. RdevMajor/RdevMinor
-	// are never copied (and therefore left as zero), so as not to expose host
-	// device numbers.
-	ls.Mask |= s.Mask & linux.STATX_ALL
-	if s.Mask&linux.STATX_TYPE != 0 {
-		if i.virtualOwner.enabled {
-			ls.Mode |= uint16(i.virtualOwner.atomicMode()) & linux.S_IFMT
-		} else {
-			ls.Mode |= s.Mode & linux.S_IFMT
-		}
-	}
-	if s.Mask&linux.STATX_MODE != 0 {
-		if i.virtualOwner.enabled {
-			ls.Mode |= uint16(i.virtualOwner.atomicMode()) &^ linux.S_IFMT
-		} else {
-			ls.Mode |= s.Mode &^ linux.S_IFMT
-		}
-	}
-	if s.Mask&linux.STATX_NLINK != 0 {
-		ls.Nlink = s.Nlink
-	}
-	if s.Mask&linux.STATX_UID != 0 {
-		if i.virtualOwner.enabled {
-			ls.UID = i.virtualOwner.atomicUID()
-		} else {
-			ls.UID = s.Uid
-		}
-	}
-	if s.Mask&linux.STATX_GID != 0 {
-		if i.virtualOwner.enabled {
-			ls.GID = i.virtualOwner.atomicGID()
-		} else {
-			ls.GID = s.Gid
-		}
-	}
-	if s.Mask&linux.STATX_ATIME != 0 {
-		ls.Atime = unixToLinuxStatxTimestamp(s.Atime)
-	}
-	if s.Mask&linux.STATX_BTIME != 0 {
-		ls.Btime = unixToLinuxStatxTimestamp(s.Btime)
-	}
-	if s.Mask&linux.STATX_CTIME != 0 {
-		ls.Ctime = unixToLinuxStatxTimestamp(s.Ctime)
-	}
-	if s.Mask&linux.STATX_MTIME != 0 {
-		ls.Mtime = unixToLinuxStatxTimestamp(s.Mtime)
-	}
-	if s.Mask&linux.STATX_SIZE != 0 {
-		ls.Size = s.Size
-	}
-	if s.Mask&linux.STATX_BLOCKS != 0 {
-		ls.Blocks = s.Blocks
-	}
-
-	return ls, nil
+	return i.hostStatx(opts)
 }
 
 // statxFromStat is a best-effort fallback for inode.Stat() if the host does not
@@ -585,7 +483,7 @@ func (i *inode) Stat(ctx context.Context, vfsfs *vfs.Filesystem, opts vfs.StatOp
 // equivalent to Statx.Attributes, Statx.AttributesMask, or Statx.Btime, so
 // those fields remain empty.
 func (i *inode) statxFromStat(devMinor uint32) (linux.Statx, error) {
-	var s unix.Stat_t
+	var s hostStat
 	if err := i.stat(&s); err != nil {
 		return linux.Statx{}, err
 	}
@@ -596,27 +494,42 @@ func (i *inode) statxFromStat(devMinor uint32) (linux.Statx, error) {
 		Mask:     linux.STATX_BASIC_STATS,
 		Blksize:  uint32(s.Blksize),
 		Nlink:    uint32(s.Nlink),
-		UID:      s.Uid,
-		GID:      s.Gid,
+		UID:      s.UID,
+		GID:      s.GID,
 		Mode:     uint16(s.Mode),
 		Ino:      i.ino,
 		Size:     uint64(s.Size),
 		Blocks:   uint64(s.Blocks),
-		Atime:    timespecToStatxTimestamp(s.Atim),
-		Ctime:    timespecToStatxTimestamp(s.Ctim),
-		Mtime:    timespecToStatxTimestamp(s.Mtim),
+		Atime:    s.Atime,
+		Ctime:    s.Ctime,
+		Mtime:    s.Mtime,
 		DevMajor: linux.UNNAMED_MAJOR,
 		DevMinor: devMinor,
 	}, nil
 }
 
-func (i *inode) stat(stat *unix.Stat_t) error {
-	if err := unix.Fstat(i.hostFD, stat); err != nil {
+// hostStat is the part of fstat(2) that this package uses.
+type hostStat struct {
+	Dev     uint64
+	Mode    uint32
+	Nlink   uint32
+	UID     uint32
+	GID     uint32
+	Size    int64
+	Blocks  int64
+	Blksize uint32
+	Atime   linux.StatxTimestamp
+	Mtime   linux.StatxTimestamp
+	Ctime   linux.StatxTimestamp
+}
+
+func (i *inode) stat(stat *hostStat) error {
+	if err := fstat(i.hostFD, stat); err != nil {
 		return err
 	}
 	if i.virtualOwner.enabled {
-		stat.Uid = i.virtualOwner.atomicUID()
-		stat.Gid = i.virtualOwner.atomicGID()
+		stat.UID = i.virtualOwner.atomicUID()
+		stat.GID = i.virtualOwner.atomicGID()
 		stat.Mode = i.virtualOwner.atomicMode()
 	}
 	return nil
@@ -652,11 +565,11 @@ func (i *inode) SetStat(ctx context.Context, fs *vfs.Filesystem, creds *auth.Cre
 		return linuxerr.EPERM
 	}
 
-	var hostStat unix.Stat_t
+	var hostStat hostStat
 	if err := i.stat(&hostStat); err != nil {
 		return err
 	}
-	if err := vfs.CheckSetStat(ctx, creds, &opts, linux.FileMode(hostStat.Mode), nil, auth.KUID(hostStat.Uid), auth.KGID(hostStat.Gid)); err != nil {
+	if err := vfs.CheckSetStat(ctx, creds, &opts, linux.FileMode(hostStat.Mode), nil, auth.KUID(hostStat.UID), auth.KGID(hostStat.GID)); err != nil {
 		return err
 	}
 
@@ -734,7 +647,7 @@ func (i *inode) Open(ctx context.Context, rp *vfs.ResolvingPath, d *kernfs.Dentr
 	if i.Mode().FileType() == linux.S_IFSOCK {
 		return nil, linuxerr.ENXIO
 	}
-	var stat unix.Stat_t
+	var stat hostStat
 	if err := i.stat(&stat); err != nil {
 		return nil, err
 	}
@@ -745,7 +658,7 @@ func (i *inode) Open(ctx context.Context, rp *vfs.ResolvingPath, d *kernfs.Dentr
 // Supported flags for Open.
 //
 // TODO(gvisor.dev/issue/2601): Support O_NONBLOCK by adding RWF_NOWAIT to pread/pwrite calls.
-const supportedOpenFlags = unix.O_ACCMODE | unix.O_NONBLOCK | unix.O_DSYNC | unix.O_SYNC | unix.O_APPEND
+const supportedOpenFlags = linux.O_ACCMODE | linux.O_NONBLOCK | linux.O_DSYNC | linux.O_SYNC | linux.O_APPEND
 
 func (i *inode) open(ctx context.Context, d *kernfs.Dentry, mnt *vfs.Mount, fileType linux.FileMode, flags uint32) (*vfs.FileDescription, error) {
 	flags &= supportedOpenFlags
@@ -882,7 +795,7 @@ func (f *fileDescription) Allocate(ctx context.Context, mode, offset, length uin
 	if f.inode.readonly {
 		return linuxerr.EPERM
 	}
-	return unix.Fallocate(f.inode.hostFD, uint32(mode), int64(offset), int64(length))
+	return fallocate(f.inode.hostFD, uint32(mode), int64(offset), int64(length))
 }
 
 // PRead implements vfs.FileDescriptionImpl.PRead.
@@ -996,8 +909,8 @@ func (f *fileDescription) Write(ctx context.Context, src usermem.IOSequence, opt
 	// and writing to the host fd. This is an unavoidable race condition because
 	// we cannot enforce synchronization on the host.
 	if f.vfsfd.StatusFlags()&linux.O_APPEND != 0 {
-		var s unix.Stat_t
-		if err := unix.Fstat(i.hostFD, &s); err != nil {
+		var s hostStat
+		if err := fstat(i.hostFD, &s); err != nil {
 			f.offsetMu.Unlock()
 			return 0, err
 		}
@@ -1028,7 +941,7 @@ func (f *fileDescription) writeToHostFD(ctx context.Context, src usermem.IOSeque
 				return int64(n), syncErr
 			}
 		} else if statusFlags&linux.O_DSYNC != 0 {
-			if syncErr := unix.Fdatasync(hostFD); syncErr != nil {
+			if syncErr := fdatasync(hostFD); syncErr != nil {
 				return int64(n), syncErr
 			}
 		}
@@ -1069,8 +982,8 @@ func (f *fileDescription) Seek(_ context.Context, offset int64, whence int32) (i
 		f.offset += offset
 
 	case linux.SEEK_END:
-		var s unix.Stat_t
-		if err := unix.Fstat(i.hostFD, &s); err != nil {
+		var s hostStat
+		if err := fstat(i.hostFD, &s); err != nil {
 			return f.offset, err
 		}
 		size := s.Size
@@ -1109,7 +1022,7 @@ func (f *fileDescription) Sync(ctx context.Context, opts vfs.SyncOptions) error 
 		return linuxerr.EPERM
 	}
 	if opts.DataOnly {
-		return unix.Fdatasync(f.inode.hostFD)
+		return fdatasync(f.inode.hostFD)
 	}
 	return unix.Fsync(f.inode.hostFD)
 }
@@ -1224,29 +1137,4 @@ func (f *fileDescription) Ioctl(ctx context.Context, uio usermem.IO, sysno uintp
 	}
 
 	return f.FileDescriptionDefaultImpl.Ioctl(ctx, uio, sysno, args)
-}
-
-// hostEventFdDevice is the host device that host event fds are associated
-// with. It is calculated once lazily.
-var hostEventFdDevice uint64
-var hostEventFdDeviceOnce sync.Once
-
-// isHostEventFdDevice initializes hostEventFdDevice and compares it to the
-// given host device id.
-func isHostEventFdDevice(dev uint64) bool {
-	hostEventFdDeviceOnce.Do(func() {
-		efd, _, err := unix.RawSyscall(unix.SYS_EVENTFD2, 0, 0, 0)
-		if err != 0 {
-			log.Warningf("failed to create dummy eventfd: %v. Importing eventfds will fail", error(err))
-			return
-		}
-		defer unix.Close(int(efd))
-		var stat unix.Stat_t
-		if err := unix.Fstat(int(efd), &stat); err != nil {
-			log.Warningf("failed to stat dummy eventfd: %v. Importing eventfds will fail", error(err))
-			return
-		}
-		hostEventFdDevice = stat.Dev
-	})
-	return dev == hostEventFdDevice
 }

@@ -1,4 +1,4 @@
-load("//tools:defs.bzl", "go_library")
+load("//tools:defs.bzl", "go_library", "go_test")
 load("//tools/go_generics:defs.bzl", "go_template_instance")
 
 package(default_applicable_licenses = ["//:license"])
@@ -20,13 +20,17 @@ go_library(
     name = "host",
     srcs = [
         "host.go",
+        "host_darwin.go",
+        "host_darwin_arm64.s",
+        "host_darwin_unsafe.go",
+        "host_linux.go",
         "host_unsafe.go",
         "inode_refs.go",
-        "ioctl_unsafe.go",
+        "ioctl_linux_unsafe.go",
         "save_restore.go",
         "tty.go",
         "util.go",
-        "util_unsafe.go",
+        "util_linux_unsafe.go",
     ],
     visibility = ["//pkg/sentry:internal"],
     deps = [
@@ -63,6 +67,17 @@ go_library(
         "//pkg/unet",
         "//pkg/usermem",
         "//pkg/waiter",
+        "@org_golang_x_sys//unix:go_default_library",
+    ],
+)
+
+go_test(
+    name = "host_test",
+    size = "small",
+    srcs = ["host_test.go"],
+    embed = [":host"],
+    deps = [
+        "//pkg/abi/linux",
         "@org_golang_x_sys//unix:go_default_library",
     ],
 )
