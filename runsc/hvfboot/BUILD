@@ -20,6 +20,7 @@ go_binary(
     srcs = [
         "gofer.go",
         "main.go",
+        "sentry.go",
     ],
     target_compatible_with = [
         "@platforms//os:macos",
@@ -66,11 +67,12 @@ go_binary(
 )
 
 go_test(
-    name = "gofer_test",
+    name = "confine_test",
     size = "small",
     srcs = [
+        "confine_darwin_arm64_test.go",
         "gofer.go",
-        "gofer_darwin_arm64_test.go",
+        "sentry.go",
     ],
     tags = ["local"],
     target_compatible_with = [

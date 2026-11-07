@@ -100,6 +100,7 @@ var defaultEnv = []string{
 type volume struct {
 	goferMount
 	target string
+	isDir  bool
 }
 
 // volumesFlag is a repeatable host:guest[:ro] flag.
@@ -133,7 +134,11 @@ func (f *volumesFlag) Set(v string) error {
 	if err != nil {
 		return err
 	}
-	*f = append(*f, volume{goferMount: goferMount{source: source, readonly: readonly}, target: filepath.Clean(parts[1])})
+	fi, err := os.Stat(source)
+	if err != nil {
+		return err
+	}
+	*f = append(*f, volume{goferMount: goferMount{source: source, readonly: readonly}, target: filepath.Clean(parts[1]), isDir: fi.IsDir()})
 	return nil
 }
 
@@ -247,10 +252,46 @@ func run(plat *hvf.HVF, imagePath string, argv []string) (int, error) {
 	defer hostFS.DecRef(ctx)
 	k.SetHostMount(vfsObj.NewDisconnectedMount(hostFS, nil, &vfs.MountOptions{}))
 
+	// Open all host resources, then confine the Sentry before it parses
+	// untrusted data (the image and the program).
 	imageFD, err := unix.Open(imagePath, unix.O_RDONLY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return 0, fmt.Errorf("opening %s: %w", imagePath, err)
 	}
+	var socks []*os.File
+	if len(volumes) > 0 {
+		var mounts []goferMount
+		for _, v := range volumes {
+			mounts = append(mounts, v.goferMount)
+		}
+		// The gofer exits when its connections close, at the latest when
+		// the Sentry exits. hvfboot does not wait for it.
+		_, s, err := startGofer(mounts, *fdLimit, *debug)
+		if err != nil {
+			return 0, err
+		}
+		socks = s
+	}
+	fdTable := k.NewFDTable()
+	stdio := make(map[int]*fd.FD)
+	for i := 0; i < 3; i++ {
+		dup, err := unix.Dup(i)
+		if err != nil {
+			return 0, fmt.Errorf("dup(%d): %w", i, err)
+		}
+		stdio[i] = fd.New(dup)
+	}
+	if _, err := fdimport.Import(ctx, fdTable, stdio, fdimport.ImportOptions{UID: auth.NoID, GID: auth.NoID}); err != nil {
+		return 0, fmt.Errorf("importing standard I/O: %w", err)
+	}
+	var sources []string
+	for _, v := range volumes {
+		sources = append(sources, v.source)
+	}
+	if err := confineSentry(sources); err != nil {
+		return 0, err
+	}
+
 	mntns, err := vfsObj.NewMountNamespace(ctx, creds, "", erofs.Name, &vfs.MountOptions{
 		ReadOnly: true,
 		GetFilesystemOptions: vfs.GetFilesystemOptions{
@@ -270,37 +311,12 @@ func run(plat *hvf.HVF, imagePath string, argv []string) (int, error) {
 			return 0, err
 		}
 	}
-	if len(volumes) > 0 {
-		var mounts []goferMount
-		for _, v := range volumes {
-			mounts = append(mounts, v.goferMount)
-		}
-		goferCmd, socks, err := startGofer(mounts, *fdLimit, *debug)
+	for i, v := range volumes {
+		err := mountVolume(ctx, vfsObj, creds, mntns, v, socks[i])
+		socks[i].Close()
 		if err != nil {
 			return 0, err
 		}
-		// The gofer exits when the Sentry closes its connections.
-		defer goferCmd.Wait()
-		for i, v := range volumes {
-			err := mountVolume(ctx, vfsObj, creds, mntns, v, socks[i])
-			socks[i].Close()
-			if err != nil {
-				return 0, err
-			}
-		}
-	}
-
-	fdTable := k.NewFDTable()
-	stdio := make(map[int]*fd.FD)
-	for i := 0; i < 3; i++ {
-		dup, err := unix.Dup(i)
-		if err != nil {
-			return 0, fmt.Errorf("dup(%d): %w", i, err)
-		}
-		stdio[i] = fd.New(dup)
-	}
-	if _, err := fdimport.Import(ctx, fdTable, stdio, fdimport.ImportOptions{UID: auth.NoID, GID: auth.NoID}); err != nil {
-		return 0, fmt.Errorf("importing standard I/O: %w", err)
 	}
 
 	ls, err := limits.NewLinuxLimitSet()
@@ -362,7 +378,7 @@ func mountVolume(ctx context.Context, vfsObj *vfs.VirtualFilesystem, creds *auth
 	root := mntns.Root(ctx)
 	defer root.DecRef(ctx)
 	pop := &vfs.PathOperation{Root: root, Start: root, Path: fspath.Parse(v.target)}
-	if fi, err := os.Stat(v.source); err == nil && fi.IsDir() {
+	if v.isDir {
 		err := vfsObj.MkdirAt(ctx, creds, pop, &vfs.MkdirOptions{Mode: 0755})
 		if err != nil && !linuxerr.Equals(linuxerr.EEXIST, err) {
 			return fmt.Errorf("making mount point %s: %w", v.target, err)
