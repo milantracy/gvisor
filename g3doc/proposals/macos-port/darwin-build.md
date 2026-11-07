@@ -370,10 +370,42 @@ and a fault after `Unmap` (so the TLB was invalidated). 50 runs pass.
 0.72 µs for an HVC round trip. The difference is the channel hand-off and
 about 140 register calls per round trip (no lazy FP state yet).
 
-Known gaps: EL0 reads of ID registers get `SIGILL` (no emulation yet); the
-root page table of a released address space is not freed; freed page
-tables can be recycled while another address space's shootdown is in
-progress; one channel hand-off per switch.
+Known gap: EL0 reads of ID registers get `SIGILL` (no emulation yet). The
+gVisor KVM platform does not emulate them either, and `AT_HWCAP` does not
+set `HWCAP_CPUID`.
+
+Page tables (2026-11-07): each address space has its own allocator over a
+shared pool of page-table pages. A page that `Unmap` frees goes back to the
+pool only after the address space has bumped its generation and kicked the
+vCPUs that run it, and `Release` returns all pages, including the root.
+`TestPageTablePages` checks that 50 address spaces do not leak pages.
+
+### System call cost
+
+`BenchmarkSyscall` runs one system call through `Switch`: a hand-off to a
+vCPU thread, the state load, `hv_vcpu_run` to the `SVC` and its `HVC` exit,
+the state save, and a hand-off back. Apple M2 Max, 2026-11-07:
+
+| Change | Per system call |
+|---|---|
+| Go channel hand-off, one call out of Go per register (about 140) | 13.6 µs |
+| Spin-then-wait hand-off with vCPU affinity (`os_sync_wait_on_address`) | 6.2-9 µs |
+| Idle vCPU threads block correctly, with the P released | 3.24 µs |
+| Register state in two `hvf.Batch` calls instead of about 140 calls | 2.39 µs |
+
+Of the 2.39 µs, `hv_vcpu_run` is about 0.8 µs and the two hand-offs are
+about 0.45 µs. Each call from Go into libSystem costs 13-18 ns of runtime
+overhead, more than the register access itself, so `hvf.Batch` makes a list
+of register calls in one assembly loop (67 registers: 607 ns, against
+about 950 ns with single calls). In the 6.2-9 µs row, a wrong argument
+count made each idle vCPU thread spin on a failing
+`os_sync_wait_on_address`. A raw (P-keeping) wait is also wrong: 12 blocked
+vCPU threads hold all Ps, and the process deadlocks.
+
+The Go CPU profiler (`-test.cpuprofile`) stops the guest: the vCPU stays in
+`hv_trap` at the first instruction of the flush stub. Without the profiler
+the same test passes. Use `sample <pid>` and `go tool addr2line` (load
+address `0x100000000`) to profile instead.
 
 ## `hvfboot`
 
@@ -428,7 +460,8 @@ test passes 14 of 14 checks: stdlib imports (including `ssl`, `ctypes`,
 `subprocess` (fork and exec), `asyncio` over a Unix socket, `sqlite3`,
 `setitimer` signals, `mmap`, `ctypes` calls into libc, `multiprocessing.Pool`,
 and `decimal`. Most checks take the same time as in Docker on the same Mac;
-`multiprocessing` takes 78 ms against 51 ms.
+`multiprocessing` took 78 ms against 51 ms, and takes 58-68 ms with the
+system call changes above.
 
 | Startup | Time per run |
 |---|---|
@@ -444,10 +477,11 @@ is now signed at build time (`hvf_signed_binary` in
 `//pkg/hvf/entitle:defs.bzl`), and signs and re-executes a copy only when
 Hypervisor.framework returns `HV_DENIED`:
 
-| Startup, signed at build time | Time per run |
-|---|---|
-| `hvfboot /bin/true` | 11 ms |
-| `hvfboot python3 -c pass` | 28 ms |
+| Startup, signed at build time | Time per run | With 2.39 µs system calls |
+|---|---|---|
+| `hvfboot /bin/true` | 11 ms | 8.9 ms |
+| `hvfboot python3 -c pass` | 28 ms | 22.0 ms |
+| busybox `sh`, 200 times fork, exec `/bin/true`, wait | 181 ms | 110 ms |
 
 To build and run:
 

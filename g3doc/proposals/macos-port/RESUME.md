@@ -96,10 +96,12 @@ Short-term goal (2026-11-07): run a Python program. Reached the same day:
 `python:3.13-slim` from an EROFS image passes a 14-check stdlib smoke test
 (threads, subprocess, asyncio, sqlite3, multiprocessing; see
 `darwin-build.md`). With `hvfboot` signed at build time, `python3 -c pass`
-starts in 28 ms (`docker run`: 193 ms). Next: the correctness
-gaps (EL0 ID-register `MRS` emulation, page-table release and recycle),
-system call cost (13.7 µs through `Switch`), then Phase 2 (darwin gofer,
-networking, Seatbelt).
+starts in 22 ms (`docker run`: 193 ms). Page tables are released and
+recycled safely. A system call through `Switch` costs 2.39 µs (13.6 µs
+before the spin-then-wait hand-off and batched register calls; see
+`darwin-build.md`). Next: lazy FP state, EL0 ID-register `MRS` emulation
+(low priority: the KVM platform does not emulate it either), then Phase 2
+(darwin gofer, networking, Seatbelt).
 
 ## Phase 0 probe plan (done)
 
