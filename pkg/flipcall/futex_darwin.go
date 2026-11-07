@@ -17,34 +17,49 @@
 package flipcall
 
 import (
-	"fmt"
+	"math"
 	"runtime"
-
-	"golang.org/x/sys/unix"
+	"syscall"
 )
 
-// errNoFutex is returned by every Endpoint operation that waits for or wakes
-// the peer on darwin. The darwin replacement for FUTEX_WAIT and FUTEX_WAKE
-// on shared memory is os_sync_wait_on_address and os_sync_wake_by_address_any
-// with OS_SYNC_WAIT_ON_ADDRESS_SHARED, which this package does not call yet.
-var errNoFutex = fmt.Errorf("flipcall: no cross-process wait on darwin: %w", unix.ENOSYS)
+// Flags for os_sync_wait_on_address and os_sync_wake_by_address_*, from
+// <os/os_sync_wait_on_address.h>. The packet window is shared with the peer
+// process.
+const (
+	osSyncWaitOnAddressShared = 0x1
+	osSyncWakeByAddressShared = 0x1
+)
 
-func (ep *Endpoint) futexSetPeerActive() error {
-	return errNoFutex
-}
-
-func (ep *Endpoint) futexWakePeer() error {
-	return errNoFutex
-}
-
-func (ep *Endpoint) futexWaitUntilActive() error {
-	return errNoFutex
-}
-
+// futexWakeConnState wakes up to numThreads waiters on the connection state.
+// It is the darwin equivalent of FUTEX_WAKE. darwin can wake one waiter or
+// all of them.
 func (ep *Endpoint) futexWakeConnState(numThreads int32) error {
-	return errNoFutex
+	fn := libc_os_sync_wake_by_address_any_trampoline_addr
+	if numThreads == math.MaxInt32 {
+		fn = libc_os_sync_wake_by_address_all_trampoline_addr
+	}
+	r, _, e := syscall_rawSyscall(fn, ep.packet, 4, osSyncWakeByAddressShared)
+	// ENOENT means that there are no waiters.
+	if int32(r) == -1 && e != syscall.ENOENT {
+		return e
+	}
+	return nil
+}
+
+// futexWaitConnState blocks while the connection state is curState. It is the
+// darwin equivalent of FUTEX_WAIT. The caller checks the state again after
+// it returns, so early returns are not errors.
+func (ep *Endpoint) futexWaitConnState(curState uint32) error {
+	r, _, e := syscall_syscall6(libc_os_sync_wait_on_address_trampoline_addr, ep.packet, uintptr(curState), 4, osSyncWaitOnAddressShared, 0, 0)
+	if int32(r) == -1 && e != syscall.EINTR && e != syscall.ENOMEM {
+		return e
+	}
+	return nil
 }
 
 func yieldThread() {
+	syscall_rawSyscall(libc_sched_yield_trampoline_addr, 0, 0, 0)
+	// The thread we're trying to yield to may be waiting for a Go runtime P.
+	// runtime.Gosched() will hand off ours if necessary.
 	runtime.Gosched()
 }

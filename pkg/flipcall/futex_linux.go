@@ -18,52 +18,11 @@
 package flipcall
 
 import (
-	"fmt"
 	"runtime"
 
 	"golang.org/x/sys/unix"
 	"gvisor.dev/gvisor/pkg/abi/linux"
 )
-
-func (ep *Endpoint) futexSetPeerActive() error {
-	if ep.connState().CompareAndSwap(ep.activeState, ep.inactiveState) {
-		return nil
-	}
-	switch cs := ep.connState().Load(); cs {
-	case csShutdown:
-		return ShutdownError{}
-	default:
-		return fmt.Errorf("unexpected connection state before FUTEX_WAKE: %v", cs)
-	}
-}
-
-func (ep *Endpoint) futexWakePeer() error {
-	if err := ep.futexWakeConnState(1); err != nil {
-		return fmt.Errorf("failed to FUTEX_WAKE peer Endpoint: %v", err)
-	}
-	return nil
-}
-
-func (ep *Endpoint) futexWaitUntilActive() error {
-	for {
-		switch cs := ep.connState().Load(); cs {
-		case ep.activeState:
-			return nil
-		case ep.inactiveState:
-			if ep.isShutdownLocally() {
-				return ShutdownError{}
-			}
-			if err := ep.futexWaitConnState(ep.inactiveState); err != nil {
-				return fmt.Errorf("failed to FUTEX_WAIT for peer Endpoint: %v", err)
-			}
-			continue
-		case csShutdown:
-			return ShutdownError{}
-		default:
-			return fmt.Errorf("unexpected connection state before FUTEX_WAIT: %v", cs)
-		}
-	}
-}
 
 func (ep *Endpoint) futexWakeConnState(numThreads int32) error {
 	if _, _, e := unix.RawSyscall(unix.SYS_FUTEX, ep.packet, linux.FUTEX_WAKE, uintptr(numThreads)); e != 0 {
