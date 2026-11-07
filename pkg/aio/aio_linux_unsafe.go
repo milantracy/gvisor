@@ -173,3 +173,22 @@ func (q *LinuxQueue) ring() *linux.AIORing {
 func (q *LinuxQueue) ringAt(idx uint32) *linux.IOEvent {
 	return (*linux.IOEvent)(unsafe.Pointer(q.ctxID + uintptr(q.ring().HeaderLength) + uintptr(idx)*unsafe.Sizeof(linux.IOEvent{})))
 }
+
+// goQueueSyscall executes r with one blocking syscall.
+func goQueueSyscall(r Request) (uintptr, unix.Errno) {
+	var sysno uintptr
+	switch r.Op {
+	case OpRead:
+		sysno = unix.SYS_PREAD64
+	case OpWrite:
+		sysno = unix.SYS_PWRITE64
+	case OpReadv:
+		sysno = unix.SYS_PREADV2
+	case OpWritev:
+		sysno = unix.SYS_PWRITEV2
+	default:
+		panic(fmt.Sprintf("unknown op %v", r.Op))
+	}
+	n, _, e := unix.Syscall6(sysno, uintptr(r.FD), uintptr(r.Buf), uintptr(r.Len), uintptr(r.Off), 0 /* pos_h */, 0 /* flags/unused */)
+	return n, e
+}
