@@ -20,6 +20,7 @@ go_library(
         "safecopy_unsafe.go",
         "sighandler_amd64.s",
         "sighandler_arm64.s",
+        "sighandler_darwin_arm64.s",
         "xrstor_amd64.s",
     ],
     visibility = ["//:sandbox"],
@@ -34,6 +35,8 @@ go_library(
 go_test(
     name = "safecopy_test",
     srcs = [
+        "safecopy_darwin_test.go",
+        "safecopy_linux_test.go",
         "safecopy_test.go",
     ],
     embed = [":safecopy"],
