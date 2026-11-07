@@ -134,7 +134,7 @@ func HostToLinux(e unix.Errno) errno.Errno {
 	if l, ok := darwinToLinux[e]; ok {
 		return l
 	}
-	if e > linuxOnlyErrnoBase && e < linuxOnlyErrnoBase+unix.Errno(maxErrno) {
+	if e > linuxOnlyErrnoBase && e <= linuxOnlyErrnoBase+maxSyscallErrno {
 		return errno.Errno(e - linuxOnlyErrnoBase)
 	}
 	return errno.EIO
@@ -152,3 +152,8 @@ func LinuxToHost(e errno.Errno) unix.Errno {
 
 // linuxOnlyErrnoBase is above all darwin errnos.
 const linuxOnlyErrnoBase = 0x10000
+
+// maxSyscallErrno is the largest errno that a Linux system call can return
+// (MAX_ERRNO in include/linux/err.h). The range includes the internal restart
+// errnos, such as ERESTARTSYS.
+const maxSyscallErrno = 4095
