@@ -508,6 +508,12 @@ func (i *inode) statxFromStat(devMinor uint32) (linux.Statx, error) {
 	}, nil
 }
 
+// StatusFlags returns the file status flags of the host file descriptor fd as
+// Linux flags.
+func StatusFlags(fd int) (uint32, error) {
+	return hostOpenFlags(fd)
+}
+
 // hostStat is the part of fstat(2) that this package uses.
 type hostStat struct {
 	Dev     uint64
