@@ -54,9 +54,9 @@ Status values:
 
 | Layer | runsc on Linux | macOS port | Status |
 |---|---|---|---|
-| File system view | New mount namespace; the rootfs and each mount source are bind-mounted under a tmpfs at `/proc/fs`, then `chroot("/root")` (`runsc/cmd/sandboxsetup/gofer_mount.go`, `runsc/cmd/gofer.go`) | A Seatbelt profile allows file access only under the real path (`subpath`) of each mount source, read-only for read-only mounts | Planned (step 2) |
+| File system view | New mount namespace; the rootfs and each mount source are bind-mounted under a tmpfs at `/proc/fs`, then `chroot("/root")` (`runsc/cmd/sandboxsetup/gofer_mount.go`, `runsc/cmd/gofer.go`) | A Seatbelt profile allows file access only under the real path (`subpath`) of each mount source, read-only for read-only mounts, plus a private `TMPDIR` for lisafs channel memory | Done |
 | Symlinks in served paths | `openat2(RESOLVE_NO_SYMLINKS)` for parents; `O_NOFOLLOW` per component | `O_NOFOLLOW_ANY` for parents and reopen; `O_NOFOLLOW` or `O_SYMLINK` per component; mount sources go through `realpath` | Done |
-| System call filter | seccomp-bpf (`runsc/gofer/filter`) | The Seatbelt profile denies process exec, network (except host Unix sockets if allowed) and IPC | Planned (step 2) |
+| System call filter | seccomp-bpf (`runsc/gofer/filter`) | The Seatbelt profile denies process exec, network and IPC (`deny default`); host Unix sockets are not supported | Done |
 | Capabilities | Dropped (`--apply-caps`) | No capabilities | No equivalent |
 | FD limit | `RLIMIT_NOFILE` from `--fdlimit` | `setrlimit`, the same (`-fdlimit`) | Done |
 | Supplementary groups | Dropped, or set per thread for host socket connections | Not changed; connecting to a host socket as another user is not supported (darwin has no per-thread credentials) | No equivalent |
@@ -89,7 +89,7 @@ Status values:
 1.  Done: `hvfboot gofer` and `hvfboot -v host:guest`: one gofer process,
     one socket pair per mount in mount order, `realpath` of mount sources,
     FD limit.
-2.  Seatbelt profile for the gofer.
+2.  Done: Seatbelt profile for the gofer (`//pkg/seatbelt`).
 3.  Seatbelt profile for the Sentry, in place of `pivot_root`.
 
 None of these steps needs root.

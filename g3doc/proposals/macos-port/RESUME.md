@@ -112,8 +112,9 @@ gofer process serves all host mounts, and Seatbelt profiles replace the
 `hvfboot gofer` process serves all host mounts, and Python reads and writes
 host files through it ("Host mounts" in `darwin-build.md`). The gofer maps
 the sandbox root to the user, as the user namespace of rootless `runsc`
-does. Next: the gofer's Seatbelt profile, the Sentry's Seatbelt profile,
-then networking. Lazy FP state
+does. A Seatbelt profile confines the gofer to its mount sources and a
+private `TMPDIR`, and denies exec and network (`//pkg/seatbelt`). Next: the
+Sentry's Seatbelt profile, then networking. Lazy FP state
 and EL0 ID-register `MRS` emulation (low priority: the KVM platform does not
 emulate it either) are deferred.
 

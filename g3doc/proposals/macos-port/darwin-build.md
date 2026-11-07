@@ -607,8 +607,44 @@ pass. No gofer process is left after the run. `python3 -c pass` takes 22 ms
 without a mount and 31 ms with one; the gofer process start is most of the
 difference.
 
-Next: Seatbelt profiles for the gofer and the Sentry. `runsc-comparison.md`
-compares each layer with `runsc`.
+### Confinement of the gofer
+
+`runsc gofer` confines itself with a `chroot` into the mount sources, a
+seccomp filter and dropped capabilities. `hvfboot gofer` uses a Seatbelt
+profile instead (`//pkg/seatbelt`, `sandbox_init(3)` through a libSystem
+trampoline, no cgo). It applies the profile before it serves a request:
+
+```
+(version 1)
+(deny default)
+(allow file-read* file-write* (subpath "<private TMPDIR>"))
+(allow file-read* file-write* (subpath "<rw mount source>"))
+(allow file-read* (subpath "<ro mount source>"))
+```
+
+-   `deny default` also denies exec, fork, network, Mach lookups and
+    signals to other processes.
+-   On darwin, `memutil.CreateMemFD` makes a file in `TMPDIR` and unlinks it
+    at once; lisafs channels use it for their memory. The gofer makes a
+    private, empty `TMPDIR` before the profile and removes it at exit, so
+    the profile does not allow the files of other programs in `TMPDIR`.
+-   Seatbelt matches real paths. Mount sources already go through
+    `realpath`, and so does the `TMPDIR`.
+-   Go reads `/etc/localtime` on first use, so the gofer loads it first.
+
+Result (2026-11-07): `//pkg/seatbelt:seatbelt_test` and
+`//runsc/hvfboot:gofer_test` confine a child process and check the
+rules. Allowed: reads and writes under rw mounts, reads under ro mounts,
+`CreateMemFD`. Denied: writes and renames out of ro mounts, reads and
+directory listings outside the mounts, exec, TCP connect. The Python host
+mount test passes under the profile. `python3 -c pass` with one mount takes
+36 ms (31 ms without the profile).
+
+Seatbelt denials are not in `log show` without more logging setup; the
+tests check the result codes instead.
+
+Next: a Seatbelt profile for the Sentry. `runsc-comparison.md` compares
+each layer with `runsc`.
 
 ## vDSO
 
