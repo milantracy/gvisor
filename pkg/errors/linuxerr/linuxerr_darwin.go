@@ -17,8 +17,6 @@
 package linuxerr
 
 import (
-	"fmt"
-
 	"golang.org/x/sys/unix"
 	"gvisor.dev/gvisor/pkg/abi/linux/errno"
 )
@@ -129,20 +127,23 @@ var linuxToDarwin = func() map[errno.Errno]unix.Errno {
 	return m
 }()
 
-// hostToLinux returns the Linux errno for a darwin errno. It panics if there
-// is none.
-func hostToLinux(e unix.Errno) errno.Errno {
-	l, ok := darwinToLinux[e]
-	if !ok {
-		panic(fmt.Sprintf("no Linux errno for host errno %q (%d)", e.Error(), e))
+// HostToLinux returns the Linux errno for a host errno. It is the inverse of
+// LinuxToHost, and returns EIO for a darwin errno that has no Linux
+// equivalent, such as EAUTH.
+func HostToLinux(e unix.Errno) errno.Errno {
+	if l, ok := darwinToLinux[e]; ok {
+		return l
 	}
-	return l
+	if e > linuxOnlyErrnoBase && e < linuxOnlyErrnoBase+unix.Errno(maxErrno) {
+		return errno.Errno(e - linuxOnlyErrnoBase)
+	}
+	return errno.EIO
 }
 
-// linuxToHost returns the darwin errno for a Linux errno. For a Linux errno
-// that darwin does not have, it returns an errno that is not a darwin errno,
-// so that it compares unequal to all of them.
-func linuxToHost(e errno.Errno) unix.Errno {
+// LinuxToHost returns the host errno for a Linux errno. For a Linux errno
+// that darwin does not have, it returns a value above all darwin errnos, so
+// that it compares unequal to all of them and HostToLinux can invert it.
+func LinuxToHost(e errno.Errno) unix.Errno {
 	if d, ok := linuxToDarwin[e]; ok {
 		return d
 	}

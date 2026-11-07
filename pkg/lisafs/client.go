@@ -20,7 +20,9 @@ import (
 	"slices"
 
 	"golang.org/x/sys/unix"
+	"gvisor.dev/gvisor/pkg/abi/linux/errno"
 	"gvisor.dev/gvisor/pkg/context"
+	"gvisor.dev/gvisor/pkg/errors/linuxerr"
 	"gvisor.dev/gvisor/pkg/flipcall"
 	"gvisor.dev/gvisor/pkg/log"
 	"gvisor.dev/gvisor/pkg/sync"
@@ -168,26 +170,8 @@ func (c *Client) StartChannels() error {
 func (c *Client) watchdog() {
 	defer c.watchdogWg.Done()
 
-	events := []unix.PollFd{
-		{
-			Fd:     int32(c.sockComm.FD()),
-			Events: unix.POLLHUP | unix.POLLRDHUP,
-		},
-	}
-
 	// Wait for a shutdown event.
-	for {
-		n, err := unix.Ppoll(events, nil, nil)
-		if err == unix.EINTR || err == unix.EAGAIN {
-			continue
-		}
-		if err != nil {
-			log.Warningf("lisafs.Client.watch(): %v", err)
-		} else if n != 1 {
-			log.Warningf("lisafs.Client.watch(): got %d events, wanted 1", n)
-		}
-		break
-	}
+	waitForHangup(c.sockComm.FD())
 
 	// Shutdown all active channels and wait for them to complete.
 	c.shutdownActiveChans()
@@ -400,7 +384,7 @@ func (c *Client) SndRcvMessage(m MID, payloadLen uint32, reqMarshal marshalFunc,
 		var resp ErrorResp
 		resp.UnmarshalUnsafe(comm.PayloadBuf(respPayloadLen))
 		debugf("recv", comm, resp.String)
-		return unix.Errno(resp.errno)
+		return linuxerr.LinuxToHost(errno.Errno(resp.errno))
 	}
 	if respM != m {
 		closeFDs(respFDs)

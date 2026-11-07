@@ -329,7 +329,7 @@ func ErrorFromUnix(err unix.Errno) error {
 	if err == unix.Errno(0) {
 		return nil
 	}
-	e := errorSlice[hostToLinux(err)]
+	e := errorSlice[HostToLinux(err)]
 	// Done this way because a single comparison in benchmarks is 2-3 faster
 	// than something like ( if err == nil && err > 0 ).
 	if e == errNotValidError {
@@ -363,7 +363,7 @@ func ToError(err *errors.Error) error {
 func ToUnix(e *errors.Error) unix.Errno {
 	var unixErr unix.Errno
 	if e != noError {
-		unixErr = linuxToHost(e.Errno())
+		unixErr = LinuxToHost(e.Errno())
 	}
 	return unixErr
 }
@@ -372,7 +372,7 @@ func ToUnix(e *errors.Error) unix.Errno {
 func Equals(e *errors.Error, err error) bool {
 	var unixErr unix.Errno
 	if e != noError {
-		unixErr = linuxToHost(e.Errno())
+		unixErr = LinuxToHost(e.Errno())
 	}
 	if err == nil {
 		err = noError

@@ -81,7 +81,9 @@ go_library(
         "bound_socket_fd_refs.go",
         "channel.go",
         "client.go",
+        "client_darwin.go",
         "client_file.go",
+        "client_linux.go",
         "communicator.go",
         "connection.go",
         "control_fd_list.go",
@@ -102,6 +104,7 @@ go_library(
     marshal = True,
     deps = [
         "//pkg/abi/linux",
+        "//pkg/abi/linux/errno",
         "//pkg/atomicbitops",
         "//pkg/cleanup",
         "//pkg/context",

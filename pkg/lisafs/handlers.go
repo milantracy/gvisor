@@ -31,8 +31,8 @@ import (
 )
 
 const (
-	allowedOpenFlags     = unix.O_ACCMODE | unix.O_TRUNC
-	setStatSupportedMask = unix.STATX_MODE | unix.STATX_UID | unix.STATX_GID | unix.STATX_SIZE | unix.STATX_ATIME | unix.STATX_MTIME
+	allowedOpenFlags     = linux.O_ACCMODE | linux.O_TRUNC
+	setStatSupportedMask = linux.STATX_MODE | linux.STATX_UID | linux.STATX_GID | linux.STATX_SIZE | linux.STATX_ATIME | linux.STATX_MTIME
 	// unixDirentMaxSize is the maximum size of unix.Dirent for amd64.
 	unixDirentMaxSize = 280
 )
@@ -284,7 +284,7 @@ func SetStatHandler(c *Connection, comm Communicator, payloadLen uint32) (uint32
 		failureMask, failureErr := fd.impl.SetStat(req)
 		resp.FailureMask = failureMask
 		if failureErr != nil {
-			resp.FailureErrNo = uint32(ExtractErrno(failureErr))
+			resp.FailureErrNo = uint32(linuxerr.HostToLinux(ExtractErrno(failureErr)))
 		}
 		return nil
 	}); err != nil {
@@ -535,7 +535,7 @@ func OpenAtHandler(c *Connection, comm Communicator, payloadLen uint32) (uint32,
 	}
 
 	accessMode := req.Flags & unix.O_ACCMODE
-	trunc := req.Flags&unix.O_TRUNC != 0
+	trunc := req.Flags&linux.O_TRUNC != 0
 	if c.opts.Readonly && (accessMode != unix.O_RDONLY || trunc) {
 		return 0, unix.EROFS
 	}
