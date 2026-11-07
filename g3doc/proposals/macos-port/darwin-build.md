@@ -504,8 +504,9 @@ The lisafs protocol carries Linux flags: the server keeps only
 `linux.O_ACCMODE | linux.O_TRUNC` of the open flags, and unlink, rename and
 xattr flags are Linux values. The Sentry sent `unix.O_TRUNC`, which equals
 `linux.O_TRUNC` only on Linux; it now sends `linux.O_TRUNC`. Errnos on the
-wire are host errnos; the Sentry and the gofer are both darwin processes,
-and the Sentry converts them with `linuxerr.HostToLinux`.
+wire are Linux errnos too: the server converts host errnos with
+`linuxerr.HostToLinux`, and the client converts them back with
+`linuxerr.LinuxToHost`.
 
 ### Server (`runsc/gofer/fs`)
 
