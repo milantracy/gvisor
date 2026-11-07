@@ -17,7 +17,10 @@ hvf_signed_binary(
 
 go_binary(
     name = "hvfboot_unsigned",
-    srcs = ["main.go"],
+    srcs = [
+        "gofer.go",
+        "main.go",
+    ],
     target_compatible_with = [
         "@platforms//os:macos",
         "@platforms//cpu:aarch64",
@@ -26,10 +29,12 @@ go_binary(
         "//pkg/abi/linux",
         "//pkg/context",
         "//pkg/cpuid",
+        "//pkg/errors/linuxerr",
         "//pkg/fd",
         "//pkg/fspath",
         "//pkg/hvf",
         "//pkg/hvf/entitle",
+        "//pkg/lisafs",
         "//pkg/log",
         "//pkg/memutil",
         "//pkg/sentry/devices/memdev",
@@ -37,6 +42,7 @@ go_binary(
         "//pkg/sentry/fsimpl/cgroup2fs",
         "//pkg/sentry/fsimpl/dev",
         "//pkg/sentry/fsimpl/erofs",
+        "//pkg/sentry/fsimpl/gofer",
         "//pkg/sentry/fsimpl/host",
         "//pkg/sentry/fsimpl/proc",
         "//pkg/sentry/fsimpl/tmpfs",
@@ -51,6 +57,9 @@ go_binary(
         "//pkg/sentry/time",
         "//pkg/sentry/usage",
         "//pkg/sentry/vfs",
+        "//pkg/unet",
+        "//runsc/config",
+        "//runsc/gofer/fs",
         "@org_golang_x_sys//unix:go_default_library",
     ],
 )

@@ -22,6 +22,12 @@
 // container image. The root filesystem is read-only; /proc, /dev and a tmpfs
 // /tmp are mounted on it.
 //
+// -v host:guest[:ro] mounts a host file or directory at guest. As in runsc,
+// one gofer process (`hvfboot gofer`) serves all host mounts over lisafs,
+// with one socket pair per mount:
+//
+//	hvfboot -image root.erofs -v $HOME/src:/mnt/src:ro /bin/ls /mnt/src
+//
 // The //runsc/hvfboot:hvfboot target is signed with the hypervisor
 // entitlement at build time. A binary without the entitlement signs a copy of
 // itself and runs that copy.
@@ -32,13 +38,16 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"golang.org/x/sys/unix"
 	"gvisor.dev/gvisor/pkg/abi/linux"
 	"gvisor.dev/gvisor/pkg/context"
 	"gvisor.dev/gvisor/pkg/cpuid"
+	"gvisor.dev/gvisor/pkg/errors/linuxerr"
 	"gvisor.dev/gvisor/pkg/fd"
 	"gvisor.dev/gvisor/pkg/fspath"
 	hvfapi "gvisor.dev/gvisor/pkg/hvf"
@@ -50,6 +59,7 @@ import (
 	"gvisor.dev/gvisor/pkg/sentry/fsimpl/cgroup2fs"
 	"gvisor.dev/gvisor/pkg/sentry/fsimpl/dev"
 	"gvisor.dev/gvisor/pkg/sentry/fsimpl/erofs"
+	"gvisor.dev/gvisor/pkg/sentry/fsimpl/gofer"
 	"gvisor.dev/gvisor/pkg/sentry/fsimpl/host"
 	"gvisor.dev/gvisor/pkg/sentry/fsimpl/proc"
 	"gvisor.dev/gvisor/pkg/sentry/fsimpl/tmpfs"
@@ -86,18 +96,66 @@ var defaultEnv = []string{
 	"LANG=C.UTF-8",
 }
 
+// volume is a -v mount.
+type volume struct {
+	goferMount
+	target string
+}
+
+// volumesFlag is a repeatable host:guest[:ro] flag.
+type volumesFlag []volume
+
+func (f *volumesFlag) String() string {
+	var s []string
+	for _, v := range *f {
+		s = append(s, v.source+":"+v.target)
+	}
+	return strings.Join(s, " ")
+}
+
+func (f *volumesFlag) Set(v string) error {
+	parts := strings.Split(v, ":")
+	readonly := false
+	if len(parts) == 3 && parts[2] == "ro" {
+		readonly = true
+		parts = parts[:2]
+	}
+	if len(parts) != 2 || parts[0] == "" || !filepath.IsAbs(parts[1]) {
+		return fmt.Errorf("%q is not host:guest[:ro] with an absolute guest path", v)
+	}
+	// The gofer opens files again by path and allows no symlinks in it, so
+	// it serves the real path.
+	source, err := filepath.Abs(parts[0])
+	if err != nil {
+		return err
+	}
+	source, err = filepath.EvalSymlinks(source)
+	if err != nil {
+		return err
+	}
+	*f = append(*f, volume{goferMount: goferMount{source: source, readonly: readonly}, target: filepath.Clean(parts[1])})
+	return nil
+}
+
 var (
 	envv       envFlag
+	volumes    volumesFlag
 	image      = flag.String("image", "", "EROFS image of the root filesystem")
 	debug      = flag.Bool("debug", false, "log at debug level")
 	straceFlag = flag.Bool("strace", false, "log system calls (implies -debug)")
+	fdLimit    = flag.Int("fdlimit", -1, "limit on the number of host FDs of the gofer, or -1 for no limit")
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "gofer" {
+		os.Exit(goferMain(os.Args[2:]))
+	}
 	flag.Var(&envv, "e", "set KEY=VALUE in the environment of the program (repeatable)")
+	flag.Var(&volumes, "v", "mount host:guest[:ro] (repeatable)")
 	flag.Parse()
 	if *image == "" || flag.NArg() == 0 {
-		fmt.Fprintf(os.Stderr, "usage: hvfboot -image <root.erofs> <program> [args...]\n")
+		fmt.Fprintf(os.Stderr, "usage: hvfboot -image <root.erofs> [-v host:guest[:ro]]... <program> [args...]\n")
+		fmt.Fprintf(os.Stderr, "       hvfboot gofer -io-fds <fd,...> -mount <ro|rw>:<path>...\n")
 		os.Exit(2)
 	}
 	cpuid.Initialize()
@@ -177,6 +235,7 @@ func run(plat *hvf.HVF, imagePath string, argv []string) (int, error) {
 	vfsObj.MustRegisterFilesystemType(tmpfs.Name, &tmpfs.FilesystemType{}, &vfs.RegisterFilesystemTypeOptions{AllowUserMount: true})
 	vfsObj.MustRegisterFilesystemType(proc.Name, &proc.FilesystemType{}, &vfs.RegisterFilesystemTypeOptions{AllowUserMount: true})
 	vfsObj.MustRegisterFilesystemType(dev.Name, &dev.FilesystemType{}, &vfs.RegisterFilesystemTypeOptions{})
+	vfsObj.MustRegisterFilesystemType(gofer.Name, &gofer.FilesystemType{}, &vfs.RegisterFilesystemTypeOptions{})
 	if err := memdev.Register(vfsObj); err != nil {
 		return 0, fmt.Errorf("registering memory devices: %w", err)
 	}
@@ -209,6 +268,25 @@ func run(plat *hvf.HVF, imagePath string, argv []string) (int, error) {
 	} {
 		if err := mountAt(ctx, vfsObj, creds, mntns, m.target, m.fsType); err != nil {
 			return 0, err
+		}
+	}
+	if len(volumes) > 0 {
+		var mounts []goferMount
+		for _, v := range volumes {
+			mounts = append(mounts, v.goferMount)
+		}
+		goferCmd, socks, err := startGofer(mounts, *fdLimit, *debug)
+		if err != nil {
+			return 0, err
+		}
+		// The gofer exits when the Sentry closes its connections.
+		defer goferCmd.Wait()
+		for i, v := range volumes {
+			err := mountVolume(ctx, vfsObj, creds, mntns, v, socks[i])
+			socks[i].Close()
+			if err != nil {
+				return 0, err
+			}
 		}
 	}
 
@@ -273,6 +351,47 @@ func mountAt(ctx context.Context, vfsObj *vfs.VirtualFilesystem, creds *auth.Cre
 	opts := &vfs.MountOptions{GetFilesystemOptions: vfs.GetFilesystemOptions{InternalMount: true}}
 	if _, err := vfsObj.MountAt(ctx, creds, fsType, pop, fsType, opts); err != nil {
 		return fmt.Errorf("mounting %s at %s: %w", fsType, target, err)
+	}
+	return nil
+}
+
+// mountVolume mounts v at its target in mntns, with sock as the connection to
+// the gofer. It makes the target directory if it does not exist and its parent
+// is writable.
+func mountVolume(ctx context.Context, vfsObj *vfs.VirtualFilesystem, creds *auth.Credentials, mntns *vfs.MountNamespace, v volume, sock *os.File) error {
+	root := mntns.Root(ctx)
+	defer root.DecRef(ctx)
+	pop := &vfs.PathOperation{Root: root, Start: root, Path: fspath.Parse(v.target)}
+	if fi, err := os.Stat(v.source); err == nil && fi.IsDir() {
+		err := vfsObj.MkdirAt(ctx, creds, pop, &vfs.MkdirOptions{Mode: 0755})
+		if err != nil && !linuxerr.Equals(linuxerr.EEXIST, err) {
+			return fmt.Errorf("making mount point %s: %w", v.target, err)
+		}
+	}
+	// The gofer client owns the FD in the mount options and closes it.
+	fd, err := unix.Dup(int(sock.Fd()))
+	if err != nil {
+		return err
+	}
+	unix.CloseOnExec(fd)
+	data := []string{
+		"trans=fd",
+		"rfdno=" + strconv.Itoa(fd),
+		"wfdno=" + strconv.Itoa(fd),
+		// The host can change the files at any time.
+		"cache=remote_revalidating",
+		"disable_fifo_open",
+	}
+	opts := &vfs.MountOptions{
+		ReadOnly: v.readonly,
+		GetFilesystemOptions: vfs.GetFilesystemOptions{
+			InternalMount: true,
+			Data:          strings.Join(data, ","),
+		},
+	}
+	if _, err := vfsObj.MountAt(ctx, creds, gofer.Name, pop, gofer.Name, opts); err != nil {
+		unix.Close(fd)
+		return fmt.Errorf("mounting %s at %s: %w", v.source, v.target, err)
 	}
 	return nil
 }
