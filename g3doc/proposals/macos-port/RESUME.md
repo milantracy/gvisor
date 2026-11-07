@@ -70,7 +70,9 @@ cgo-free Hypervisor.framework binding, is done; its test runs guest code and
 an HVC round trip costs about 720 ns from Go (2026-11-07). The
 `pagesize_16k` variant is done and is the default on macOS hosts
 (`.bazelrc`); the vDSO parameters are now in the last 4 KiB of the
-parameter page. Next: the IPA registry, then the `hvf` platform.
+parameter page. The IPA registry
+(`pkg/sentry/platform/hvf/ipa`) and the `memutil.MappingObserver` hooks in
+`pgalloc`, `fsutil` and `erofs` are done. Next: the `hvf` platform.
 
 ## Phase 0 probe plan (done)
 
