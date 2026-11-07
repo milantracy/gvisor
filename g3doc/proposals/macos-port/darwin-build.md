@@ -126,6 +126,7 @@ linux/arm64 cross-build whose tests run in a `debian:trixie` container.
 | `//pkg/sentry/socket`, `socket/netstack`, `socket/unix`, `fsimpl/gofer` | ok | pass | pass | Linux ABI constants for guest values; see below |
 | `//pkg/sentry/fsimpl/host` | ok | pass (new test) | pass | Per-OS stat, readiness, status flags, timestamps; no host TTY on darwin |
 | `//pkg/sentry/kernel`, `//pkg/sentry/syscalls/linux` | ok | not run | builds | Host errnos and status flags converted to Linux values |
+| `//pkg/hvf` (new) | ok | pass | builds (no files) | cgo-free Hypervisor.framework binding; see below |
 
 ### Second pass over the demo path (2026-11-06)
 
@@ -237,6 +238,25 @@ yet: there is no darwin platform.
 A search of the demo-path Sentry packages for `unix.*` constants that can
 be application values found one more (`fdsToHostFiles` masked host status
 flags with `linux.O_NONBLOCK`), now fixed. The other uses are host calls.
+
+## `pkg/hvf`
+
+`pkg/hvf` calls Hypervisor.framework without cgo. Each function has a
+`cgo_import_dynamic` from the framework and an arm64 trampoline, as for
+libSystem. `hv_vcpu_run` goes through `syscall.syscall` so that the scheduler
+can give the P to another thread; the other calls use `syscall.rawSyscall`.
+`hv_vcpu_set_simd_fp_reg` takes its value in Q0, so a shim loads Q0 from a
+pointer and then jumps to it. The package has code only on darwin/arm64.
+
+The test copies its own binary, signs the copy ad hoc with the
+`com.apple.security.hypervisor` entitlement (`codesign -s -`; no developer
+account), and runs the copy. If signing fails, the tests skip. The tests
+run guest code at EL1h with the MMU off: an `hvc #1` exit with the expected
+X0, register and Q-register round trips, and `hv_vcpus_exit` from another
+thread (`ExitCanceled`).
+
+`BenchmarkHVCRoundTrip` (5 runs, 2026-11-07): 713 to 730 ns per HVC exit and
+re-entry, against about 680 ns for the C probe 1 (`phase0-results.md`).
 
 ## vDSO
 
