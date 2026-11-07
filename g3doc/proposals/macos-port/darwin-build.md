@@ -101,6 +101,26 @@ linux/arm64 cross-build whose tests run in a `debian:trixie` container.
 | `//pkg/sentry/hostfd` | ok | blocked by `safecopy` | pass | libSystem read/write wrappers on darwin |
 | `//pkg/aio` | ok | pass | pass | libSystem wrappers; no `LinuxQueue` on darwin |
 | `//pkg/p9` | ok | pass | pass | `abi/linux` fallocate constants |
+| `//pkg/seccomp` | ok | Linux-only test | pass | Filter install returns `ENOSYS` on darwin |
+| `//pkg/pinring` | ok | Linux-only test | pass | io_uring calls return `ENOSYS` on darwin |
+| `//pkg/eventfd` | ok | blocked by `safecopy` | pass | Non-blocking pipe on darwin; `Read` returns the sum |
+| `//pkg/unet` | ok | blocked by `safecopy` | pass | Per-OS socket creation, `poll`, `SO_NOSIGPIPE`; no `SOCK_SEQPACKET` on darwin |
+| `//pkg/fsutil` | ok | no tests | builds | darwin directory listing; gofer-only wrappers stay Linux-only |
+| `//pkg/memutil` | ok | no tests | builds | `CreateMemFD` is an unlinked APFS temp file on darwin |
+| `//pkg/flipcall` | ok | Linux-only test | pass | Peer wait and wake return `ENOSYS` on darwin until `os_sync_wait_on_address` is bound |
+| `//pkg/sentry/usage` | ok | no tests | builds | Fixed by `memutil` |
+
+### Second pass over the demo path (2026-11-06)
+
+With the packages above fixed, the same 12 targets still build 1 of 12. The
+next failures:
+
+| Package | First errors |
+|---|---|
+| `//pkg/sentry/hostmm` | `SYS_MEMBARRIER` |
+| `//pkg/sentry/socket/unix/transport` | `pkg/fdnotifier` has no darwin files (epoll); `SO_DOMAIN`, `SO_PASSCRED` |
+| `//pkg/lisafs` | `STATX_*`, `POLLRDHUP`, `Ppoll`, `EREMOTEIO` |
+| `//pkg/sentry/state/stateio` | `O_DIRECT` |
 
 Found on the way:
 

@@ -61,10 +61,10 @@ and the design doc on google/gvisor#1270. The A/B decision is (B).
 
 The darwin build is in progress on `macos-port/darwin-shims` (`darwin-build.md`
 has the host setup and the list of failing packages). Native Bazel works on the
-Mac. Done: the vDSO (clang, lld, and a Debian header sysroot), `fd`,
-`fdchannel`, `hostfd`, `aio`, `p9`. Next: `fsutil`, `usage`, `eventfd`,
-`flipcall`, `seccomp`, `pinring`, and a darwin signal handler for `safecopy`.
-The progress table in `darwin-build.md` is the current state.
+Mac. The first layer of leaf packages is done (see the progress table in
+`darwin-build.md`). Next: the second layer (`hostmm`, `fdnotifier` and
+`socket/unix/transport`, `lisafs`, `stateio`), and a darwin signal handler for
+`safecopy`, which blocks running most tests on darwin.
 
 ## Phase 0 probe plan (done)
 
