@@ -29,5 +29,5 @@ var limitPCID uint16
 func GetASIDBits() uint8
 
 func init() {
-	limitPCID = uint16(1)<<GetASIDBits() - 1
+	limitPCID = uint16(1)<<asidBits() - 1
 }
