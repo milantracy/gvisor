@@ -11,6 +11,7 @@ go_library(
         "seccomp.go",
         "seccomp_amd64.go",
         "seccomp_arm64.go",
+        "seccomp_darwin.go",
         "seccomp_fuzz_helpers.go",
         "seccomp_optimizer.go",
         "seccomp_rules.go",
@@ -36,6 +37,7 @@ go_test(
     embedsrcs = [
         "//pkg/seccomp/victim",  # keep
     ],
+    target_compatible_with = ["@platforms//os:linux"],
     deps = [
         "//pkg/abi/linux",
         "//pkg/bpf",
