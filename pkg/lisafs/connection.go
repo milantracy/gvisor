@@ -21,6 +21,7 @@ import (
 	"slices"
 
 	"golang.org/x/sys/unix"
+	"gvisor.dev/gvisor/pkg/errors/linuxerr"
 	"gvisor.dev/gvisor/pkg/flipcall"
 	"gvisor.dev/gvisor/pkg/log"
 	"gvisor.dev/gvisor/pkg/sync"
@@ -198,7 +199,7 @@ func (c *Connection) service(ch *channel) error {
 }
 
 func (c *Connection) respondError(comm Communicator, err unix.Errno) (MID, uint32, []int) {
-	resp := &ErrorResp{errno: uint32(err)}
+	resp := &ErrorResp{errno: uint32(linuxerr.HostToLinux(err))}
 	respLen := uint32(resp.SizeBytes())
 	resp.MarshalUnsafe(comm.PayloadBuf(respLen))
 	return Error, respLen, nil
@@ -227,7 +228,7 @@ func (c *Connection) handleMsg(comm Communicator, m MID, payloadLen uint32) (ret
 			// Wrap in an EREMOTEIO error; we don't really have a better way to
 			// describe this kind of error. EREMOTEIO is appropriate for a generic
 			// failed RPC message.
-			retM, retPayloadLen, retFDs = c.respondError(comm, unix.EREMOTEIO)
+			retM, retPayloadLen, retFDs = c.respondError(comm, linuxerr.ToUnix(linuxerr.EREMOTEIO))
 		}
 	}()
 

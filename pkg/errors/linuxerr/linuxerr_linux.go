@@ -21,14 +21,14 @@ import (
 	"gvisor.dev/gvisor/pkg/abi/linux/errno"
 )
 
-// hostToLinux returns the Linux errno for a host errno. They are the same on
+// HostToLinux returns the Linux errno for a host errno. They are the same on
 // Linux.
-func hostToLinux(e unix.Errno) errno.Errno {
+func HostToLinux(e unix.Errno) errno.Errno {
 	return errno.Errno(e)
 }
 
-// linuxToHost returns the host errno for a Linux errno. They are the same on
+// LinuxToHost returns the host errno for a Linux errno. They are the same on
 // Linux.
-func linuxToHost(e errno.Errno) unix.Errno {
+func LinuxToHost(e errno.Errno) unix.Errno {
 	return unix.Errno(e)
 }

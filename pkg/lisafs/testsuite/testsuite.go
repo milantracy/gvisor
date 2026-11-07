@@ -167,7 +167,7 @@ func openFile(ctx context.Context, t *testing.T, fdLisa lisafs.ClientFD, flags u
 func unlinkFile(ctx context.Context, t *testing.T, dir lisafs.ClientFD, name string, isDir bool) {
 	var flags uint32
 	if isDir {
-		flags = unix.AT_REMOVEDIR
+		flags = linux.AT_REMOVEDIR
 	}
 	if err := dir.UnlinkAt(ctx, name, flags); err != nil {
 		t.Errorf("unlinking file %s failed: %v", name, err)
@@ -270,52 +270,52 @@ func allocateAndVerify(ctx context.Context, t *testing.T, fdLisa lisafs.ClientFD
 }
 
 func cmpStatx(t *testing.T, want, got lisafs.Statx) {
-	if got.Mask&unix.STATX_MODE != 0 && want.Mask&unix.STATX_MODE != 0 {
+	if got.Mask&linux.STATX_MODE != 0 && want.Mask&linux.STATX_MODE != 0 {
 		if got.Mode != want.Mode {
 			t.Errorf("mode differs: want %d, got %d", want.Mode, got.Mode)
 		}
 	}
-	if got.Mask&unix.STATX_INO != 0 && want.Mask&unix.STATX_INO != 0 {
+	if got.Mask&linux.STATX_INO != 0 && want.Mask&linux.STATX_INO != 0 {
 		if got.Ino != want.Ino {
 			t.Errorf("inode number differs: want %d, got %d", want.Ino, got.Ino)
 		}
 	}
-	if got.Mask&unix.STATX_NLINK != 0 && want.Mask&unix.STATX_NLINK != 0 {
+	if got.Mask&linux.STATX_NLINK != 0 && want.Mask&linux.STATX_NLINK != 0 {
 		if got.Nlink != want.Nlink {
 			t.Errorf("nlink differs: want %d, got %d", want.Nlink, got.Nlink)
 		}
 	}
-	if got.Mask&unix.STATX_UID != 0 && want.Mask&unix.STATX_UID != 0 {
+	if got.Mask&linux.STATX_UID != 0 && want.Mask&linux.STATX_UID != 0 {
 		if got.UID != want.UID {
 			t.Errorf("UID differs: want %d, got %d", want.UID, got.UID)
 		}
 	}
-	if got.Mask&unix.STATX_GID != 0 && want.Mask&unix.STATX_GID != 0 {
+	if got.Mask&linux.STATX_GID != 0 && want.Mask&linux.STATX_GID != 0 {
 		if got.GID != want.GID {
 			t.Errorf("GID differs: want %d, got %d", want.GID, got.GID)
 		}
 	}
-	if got.Mask&unix.STATX_SIZE != 0 && want.Mask&unix.STATX_SIZE != 0 {
+	if got.Mask&linux.STATX_SIZE != 0 && want.Mask&linux.STATX_SIZE != 0 {
 		if got.Size != want.Size {
 			t.Errorf("size differs: want %d, got %d", want.Size, got.Size)
 		}
 	}
-	if got.Mask&unix.STATX_BLOCKS != 0 && want.Mask&unix.STATX_BLOCKS != 0 {
+	if got.Mask&linux.STATX_BLOCKS != 0 && want.Mask&linux.STATX_BLOCKS != 0 {
 		if got.Blocks != want.Blocks {
 			t.Errorf("blocks differs: want %d, got %d", want.Blocks, got.Blocks)
 		}
 	}
-	if got.Mask&unix.STATX_ATIME != 0 && want.Mask&unix.STATX_ATIME != 0 {
+	if got.Mask&linux.STATX_ATIME != 0 && want.Mask&linux.STATX_ATIME != 0 {
 		if got.Atime.ToNsec() != want.Atime.ToNsec() {
 			t.Errorf("atime differs: want %v, got %v", want.Atime, got.Atime)
 		}
 	}
-	if got.Mask&unix.STATX_MTIME != 0 && want.Mask&unix.STATX_MTIME != 0 {
+	if got.Mask&linux.STATX_MTIME != 0 && want.Mask&linux.STATX_MTIME != 0 {
 		if got.Mtime.ToNsec() != want.Mtime.ToNsec() {
 			t.Errorf("mtime differs: want %v, got %v", want.Mtime, got.Mtime)
 		}
 	}
-	if got.Mask&unix.STATX_CTIME != 0 && want.Mask&unix.STATX_CTIME != 0 {
+	if got.Mask&linux.STATX_CTIME != 0 && want.Mask&linux.STATX_CTIME != 0 {
 		if got.Ctime.ToNsec() != want.Ctime.ToNsec() {
 			t.Errorf("ctime differs: want %v, got %v", want.Ctime, got.Ctime)
 		}
@@ -404,7 +404,7 @@ func testSetStat(ctx context.Context, t *testing.T, tester Tester, root lisafs.C
 
 	now := time.Now()
 	wantStat := lisafs.Statx{
-		Mask:  unix.STATX_MODE | unix.STATX_ATIME | unix.STATX_MTIME | unix.STATX_SIZE,
+		Mask:  linux.STATX_MODE | linux.STATX_ATIME | linux.STATX_MTIME | linux.STATX_SIZE,
 		Mode:  0760,
 		UID:   uint32(unix.Getuid()),
 		GID:   uint32(unix.Getgid()),
@@ -413,7 +413,7 @@ func testSetStat(ctx context.Context, t *testing.T, tester Tester, root lisafs.C
 		Mtime: lisafs.NsecToStatxTimestamp(now.UnixNano()),
 	}
 	if tester.SetUserGroupIDSupported() {
-		wantStat.Mask |= unix.STATX_UID | unix.STATX_GID
+		wantStat.Mask |= linux.STATX_UID | linux.STATX_GID
 	}
 	lwantStat := wantStat.ToLinuxStatx()
 	failureMask, failureErr, err := controlFile.SetStat(ctx, &lwantStat)

@@ -20,7 +20,9 @@ import (
 
 	"golang.org/x/sys/unix"
 	"gvisor.dev/gvisor/pkg/abi/linux"
+	"gvisor.dev/gvisor/pkg/abi/linux/errno"
 	"gvisor.dev/gvisor/pkg/context"
+	"gvisor.dev/gvisor/pkg/errors/linuxerr"
 	"gvisor.dev/gvisor/pkg/log"
 	"gvisor.dev/gvisor/pkg/marshal/primitive"
 )
@@ -310,7 +312,7 @@ func (f *ClientFD) SetStat(ctx context.Context, stat *linux.Statx) (uint32, erro
 	if resp.FailureMask == 0 {
 		return 0, nil, nil
 	}
-	return resp.FailureMask, unix.Errno(resp.FailureErrNo), nil
+	return resp.FailureMask, linuxerr.LinuxToHost(errno.Errno(resp.FailureErrNo)), nil
 }
 
 // WalkMultiple makes the Walk RPC with multiple path components.
