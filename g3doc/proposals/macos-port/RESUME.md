@@ -64,7 +64,9 @@ has the host setup and the list of failing packages). Native Bazel works on the
 Mac. The first and second layers are done (see the progress table in
 `darwin-build.md`); package tests run on darwin, and flipcall uses
 `os_sync_wait_on_address`. `pgalloc` decommits with `F_PUNCHHOLE` (registry
-requirement 7). Next: `fsimpl/host` (stdio for the Phase 1 demo).
+requirement 7). All 12 demo-path targets build on darwin (2026-11-07). Host
+TTYs are not supported yet (stdio as pipes or files). Next: step 2, the
+`pkg/hvf` binding, then the `hvf` platform.
 
 ## Phase 0 probe plan (done)
 

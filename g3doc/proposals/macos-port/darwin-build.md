@@ -124,6 +124,8 @@ linux/arm64 cross-build whose tests run in a `debian:trixie` container.
 | `//pkg/sentry/contexttest` | ok | | not checked | ptrace platform only on Linux; nil platform on darwin |
 | `//pkg/sentry/fsutil` | ok | pass | pass | No `MAP_FIXED_NOREPLACE`; the address is a hint |
 | `//pkg/sentry/socket`, `socket/netstack`, `socket/unix`, `fsimpl/gofer` | ok | pass | pass | Linux ABI constants for guest values; see below |
+| `//pkg/sentry/fsimpl/host` | ok | pass (new test) | pass | Per-OS stat, readiness, status flags, timestamps; no host TTY on darwin |
+| `//pkg/sentry/kernel`, `//pkg/sentry/syscalls/linux` | ok | not run | builds | Host errnos and status flags converted to Linux values |
 
 ### Second pass over the demo path (2026-11-06)
 
@@ -163,8 +165,8 @@ These differ from Linux and matter beyond the build:
     `errno.Errno` and `*errors.Error` hold Linux values, and
     `linuxerr.HostToLinux` and `linuxerr.LinuxToHost` convert between them.
     On Linux both are the identity. A darwin errno with no Linux equivalent
-    (such as `EAUTH`) becomes `EIO`. Still to do: `task_syscall.go` returns a
-    `unix.Errno` to the application as a Linux errno.
+    (such as `EAUTH`) becomes `EIO`. `kernel.ExtractErrno` converts host
+    errnos before it returns them to the application.
 -   **Open and `*at` flags differ.** `O_TRUNC` is `0x400` (Linux `0x200`)
     and `AT_REMOVEDIR` is `0x80` (Linux `0x200`). lisafs carries Linux
     values; a darwin gofer must convert them before it calls the host.
@@ -225,6 +227,16 @@ Both are done. Later passes found `sentry/fsutil`, `sentry/socket` and
 | Package | First errors |
 |---|---|
 | `//pkg/sentry/fsimpl/host` | `statx`, epoll, `Stat_t` layout, host terminal `ioctl`s |
+
+`fsimpl/host` is done (`fstat` in place of `statx`, kqueue readiness, host
+status flags converted to Linux flags, `futimens`; host TTYs return
+`ENOTTY`). After it, **all 12 demo-path targets build on darwin**
+(2026-11-07), including `kernel`, `mm` and `syscalls/linux`. Nothing runs
+yet: there is no darwin platform.
+
+A search of the demo-path Sentry packages for `unix.*` constants that can
+be application values found one more (`fdsToHostFiles` masked host status
+flags with `linux.O_NONBLOCK`), now fixed. The other uses are host calls.
 
 ## vDSO
 
