@@ -1,5 +1,5 @@
 load("//pkg/hvf/entitle:defs.bzl", "hvf_signed_binary")
-load("//tools:defs.bzl", "go_binary")
+load("//tools:defs.bzl", "go_binary", "go_test")
 
 package(default_applicable_licenses = ["//:license"])
 
@@ -37,6 +37,7 @@ go_binary(
         "//pkg/lisafs",
         "//pkg/log",
         "//pkg/memutil",
+        "//pkg/seatbelt",
         "//pkg/sentry/devices/memdev",
         "//pkg/sentry/fdimport",
         "//pkg/sentry/fsimpl/cgroup2fs",
@@ -57,6 +58,31 @@ go_binary(
         "//pkg/sentry/time",
         "//pkg/sentry/usage",
         "//pkg/sentry/vfs",
+        "//pkg/unet",
+        "//runsc/config",
+        "//runsc/gofer/fs",
+        "@org_golang_x_sys//unix:go_default_library",
+    ],
+)
+
+go_test(
+    name = "gofer_test",
+    size = "small",
+    srcs = [
+        "gofer.go",
+        "gofer_darwin_arm64_test.go",
+    ],
+    tags = ["local"],
+    target_compatible_with = [
+        "@platforms//os:macos",
+        "@platforms//cpu:aarch64",
+    ],
+    deps = [
+        "//pkg/abi/linux",
+        "//pkg/lisafs",
+        "//pkg/log",
+        "//pkg/memutil",
+        "//pkg/seatbelt",
         "//pkg/unet",
         "//runsc/config",
         "//runsc/gofer/fs",

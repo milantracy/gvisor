@@ -22,10 +22,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
 	"gvisor.dev/gvisor/pkg/lisafs"
 	"gvisor.dev/gvisor/pkg/log"
+	"gvisor.dev/gvisor/pkg/seatbelt"
 	"gvisor.dev/gvisor/pkg/unet"
 	"gvisor.dev/gvisor/runsc/config"
 	fsgofer "gvisor.dev/gvisor/runsc/gofer/fs"
@@ -35,6 +37,11 @@ import (
 // sandbox over lisafs, with one socket pair per mount. The gofer gets its
 // socket ends as --io-fds, in mount order, and -mount gives the host path of
 // each mount in the same order.
+//
+// runsc confines the gofer with a chroot into the mount sources, seccomp and
+// dropped capabilities. On darwin, a Seatbelt profile (goferProfile) does
+// this job: before the gofer serves a request, it loses access to all files
+// except the mount sources, and to exec, network and IPC.
 
 // goferMount is a host directory or file that the gofer serves.
 type goferMount struct {
@@ -127,6 +134,27 @@ func goferMain(args []string) int {
 		return 1
 	}
 
+	// The memory of lisafs channels is in files that memutil.CreateMemFD
+	// makes in TMPDIR and unlinks at once. The gofer gets a private TMPDIR
+	// so that its profile does not allow the files of other programs in
+	// TMPDIR.
+	tmpDir, err := os.MkdirTemp("", "hvfboot-gofer-")
+	if err == nil {
+		tmpDir, err = filepath.EvalSymlinks(tmpDir)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hvfboot gofer: %v\n", err)
+		return 1
+	}
+	defer os.RemoveAll(tmpDir)
+	os.Setenv("TMPDIR", tmpDir)
+	// Go reads /etc/localtime on first use, which the profile denies.
+	_ = time.Local.String()
+	if err := seatbelt.Init(goferProfile(mounts, tmpDir)); err != nil {
+		fmt.Fprintf(os.Stderr, "hvfboot gofer: %v\n", err)
+		return 1
+	}
+
 	// The Sentry runs the sandbox as root; the gofer runs as the user.
 	fsgofer.MapRootToEffectiveIDs()
 	conf := &fsgofer.Config{
@@ -156,6 +184,27 @@ func goferMain(args []string) int {
 	server.Wait()
 	server.Destroy()
 	return 0
+}
+
+// goferProfile returns the Seatbelt profile of a gofer that serves mounts,
+// with tmpDir as TMPDIR. It denies everything, then allows:
+//   - Reads of each mount source and the files under it, and writes too for
+//     read-write mounts.
+//   - Reads and writes under tmpDir.
+//
+// All paths are real paths, which Seatbelt matches.
+func goferProfile(mounts []goferMount, tmpDir string) string {
+	var b strings.Builder
+	b.WriteString("(version 1)\n(deny default)\n")
+	fmt.Fprintf(&b, "(allow file-read* file-write* (subpath %s))\n", seatbelt.Quote(tmpDir))
+	for _, m := range mounts {
+		ops := "file-read* file-write*"
+		if m.readonly {
+			ops = "file-read*"
+		}
+		fmt.Fprintf(&b, "(allow %s (subpath %s))\n", ops, seatbelt.Quote(m.source))
+	}
+	return b.String()
 }
 
 // setFDLimit sets RLIMIT_NOFILE to limit, unless limit is negative.
