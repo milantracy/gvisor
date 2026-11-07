@@ -15,14 +15,10 @@
 package transport
 
 import (
-	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
-	"gvisor.dev/gvisor/pkg/log"
 )
-
-var usingRootCredsLogger = log.BasicRateLimitedLogger(time.Minute)
 
 // fdReadVec receives from fd to bufs.
 //
@@ -45,12 +41,12 @@ func fdReadVec(fd int, bufs [][]byte, control []byte, peek bool, maxlen int64) (
 	var msg unix.Msghdr
 	if len(control) != 0 {
 		msg.Control = &control[0]
-		msg.Controllen = uint64(len(control))
+		msg.SetControllen(len(control))
 	}
 
 	if len(iovecs) != 0 {
 		msg.Iov = &iovecs[0]
-		msg.Iovlen = uint64(len(iovecs))
+		msg.SetIovlen(len(iovecs))
 	}
 
 	rawN, _, e := unix.RawSyscall(unix.SYS_RECVMSG, uintptr(fd), uintptr(unsafe.Pointer(&msg)), flags)
@@ -68,10 +64,10 @@ func fdReadVec(fd int, bufs [][]byte, control []byte, peek bool, maxlen int64) (
 	controlTrunc = msg.Flags&unix.MSG_CTRUNC == unix.MSG_CTRUNC
 
 	if n > length {
-		return length, n, msg.Controllen, controlTrunc, nil
+		return length, n, uint64(msg.Controllen), controlTrunc, nil
 	}
 
-	return n, n, msg.Controllen, controlTrunc, nil
+	return n, n, uint64(msg.Controllen), controlTrunc, nil
 }
 
 // fdWriteVec sends from bufs to fd.
@@ -93,40 +89,21 @@ func fdWriteVec(fd int, bufs [][]byte, maxlen int64, truncate bool, creds bool) 
 	var msg unix.Msghdr
 	if len(iovecs) > 0 {
 		msg.Iov = &iovecs[0]
-		msg.Iovlen = uint64(len(iovecs))
+		msg.SetIovlen(len(iovecs))
 	}
 
 	if creds {
-		// We can't pass arbitrary application credentials to the host. Pass the
-		// sentry's credentials instead.
-		cmsgSlice := make([]byte, unix.CmsgSpace(unix.SizeofUcred))
-		cmsg := (*unix.Cmsghdr)(unsafe.Pointer(&cmsgSlice[0]))
-		cmsg.Level = unix.SOL_SOCKET
-		cmsg.Type = unix.SCM_CREDENTIALS
-		cmsgLen := unix.CmsgLen(unix.SizeofUcred)
-		cmsg.SetLen(cmsgLen)
-		cmsgData := (*unix.Ucred)(unsafe.Pointer(&cmsgSlice[unix.CmsgLen(0)]))
-		// Collect owner information for fd. Gete(uid|gid) are forbidden by the
-		// sentry's seccomp filters.
-		s := unix.Stat_t{}
-		if err := unix.Fstat(fd, &s); err != nil {
+		control, err := credsControl(fd)
+		if err != nil {
 			return 0, length, err
 		}
-		if s.Uid == 0 || s.Gid == 0 {
-			usingRootCredsLogger.Warningf("gVisor does not support setting UID or GID to root in SCM credentials sent from the sentry")
-			return 0, length, unix.EINVAL
+		if len(control) != 0 {
+			msg.Control = &control[0]
+			msg.SetControllen(len(control))
 		}
-		pid, _, err := unix.RawSyscall(unix.SYS_GETPID, 0, 0, 0)
-		if err != 0 {
-			return 0, length, err
-		}
-		*cmsgData = unix.Ucred{Pid: int32(pid), Uid: s.Uid, Gid: s.Gid}
-
-		msg.Control = &cmsgSlice[0]
-		msg.SetControllen(cmsgLen)
 	}
 
-	n, _, e := unix.RawSyscall(unix.SYS_SENDMSG, uintptr(fd), uintptr(unsafe.Pointer(&msg)), unix.MSG_DONTWAIT|unix.MSG_NOSIGNAL)
+	n, _, e := unix.RawSyscall(unix.SYS_SENDMSG, uintptr(fd), uintptr(unsafe.Pointer(&msg)), unix.MSG_DONTWAIT|msgNoSignal)
 	if e != 0 {
 		// N.B. prioritize the syscall error over the buildIovec error.
 		return 0, length, e
