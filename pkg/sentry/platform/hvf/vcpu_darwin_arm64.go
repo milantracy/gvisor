@@ -52,6 +52,10 @@ type vcpu struct {
 
 	// ttbr0 is the value of TTBR0_EL1.
 	ttbr0 uint64
+	// batch holds the register accesses for the next call out of Go.
+	batch *hvf.Batch
+	// esr and far receive ESR_EL1 and FAR_EL1 from batch.
+	esr, far uint64
 	// lastASID and lastGen are the address space and generation that the
 	// TLB of the vCPU is valid for.
 	lastASID, lastGen uint64
@@ -65,6 +69,7 @@ func (v *vcpu) loop(errs chan<- error) {
 	v.v, err = hvf.NewVCPU()
 	if err == nil {
 		v.id = v.v.ID()
+		v.batch = v.v.NewBatch()
 		err = v.init()
 	}
 	errs <- err
@@ -144,42 +149,57 @@ func (v *vcpu) sysReg(r hvf.SysReg) uint64 {
 	return val
 }
 
-// loadState loads the application state from ac into the vCPU, except PC
-// and PSTATE.
-func (v *vcpu) loadState(ac *arch.Context64) {
+// addLoad adds to v.batch the writes that load the application state from
+// ac into the vCPU, except PC and PSTATE. ac must not change until v.batch
+// runs.
+func (v *vcpu) addLoad(ac *arch.Context64) {
+	b := v.batch
 	regs := &ac.StateData().Regs
 	for i, val := range regs.Regs {
-		must(v.v.SetReg(hvf.RegX0+hvf.Reg(i), val))
+		b.SetReg(hvf.RegX0+hvf.Reg(i), val)
 	}
-	must(v.v.SetSysReg(hvf.SysRegSPEL0, regs.Sp))
-	must(v.v.SetSysReg(hvf.SysRegTPIDREL0, regs.TPIDR_EL0))
+	b.SetSysReg(hvf.SysRegSPEL0, regs.Sp)
+	b.SetSysReg(hvf.SysRegTPIDREL0, regs.TPIDR_EL0)
 	fpsr, fpcr, q := fpState(*ac.FloatingPointData())
-	must(v.v.SetReg(hvf.RegFPSR, *fpsr))
-	must(v.v.SetReg(hvf.RegFPCR, *fpcr))
+	b.SetReg(hvf.RegFPSR, *fpsr)
+	b.SetReg(hvf.RegFPCR, *fpcr)
 	for i := range q {
-		must(v.v.SetSIMDFPReg(i, q[i]))
+		b.SetSIMDFPReg(i, &q[i])
 	}
+}
+
+// addSave adds to v.batch the reads that save the application state from
+// the vCPU into ac, except PC and PSTATE.
+func (v *vcpu) addSave(ac *arch.Context64) {
+	b := v.batch
+	regs := &ac.StateData().Regs
+	for i := range regs.Regs {
+		b.Reg(hvf.RegX0+hvf.Reg(i), &regs.Regs[i])
+	}
+	b.SysReg(hvf.SysRegSPEL0, &regs.Sp)
+	b.SysReg(hvf.SysRegTPIDREL0, &regs.TPIDR_EL0)
+	fpsr, fpcr, q := fpState(*ac.FloatingPointData())
+	b.Reg(hvf.RegFPSR, fpsr)
+	b.Reg(hvf.RegFPCR, fpcr)
+	for i := range q {
+		b.SIMDFPReg(i, &q[i])
+	}
+}
+
+// doBatch runs v.batch and empties it.
+func (v *vcpu) doBatch() {
+	must(v.batch.Do())
+	v.batch.Reset()
 }
 
 // saveState saves the application state from the vCPU into ac, with PC pc
 // and PSTATE pstate.
 func (v *vcpu) saveState(ac *arch.Context64, pc, pstate uint64) {
+	v.addSave(ac)
+	v.doBatch()
 	regs := &ac.StateData().Regs
-	for i := range regs.Regs {
-		regs.Regs[i] = v.reg(hvf.RegX0 + hvf.Reg(i))
-	}
-	regs.Sp = v.sysReg(hvf.SysRegSPEL0)
-	regs.TPIDR_EL0 = v.sysReg(hvf.SysRegTPIDREL0)
 	regs.Pc = pc
 	regs.Pstate = pstate
-	fpsr, fpcr, q := fpState(*ac.FloatingPointData())
-	*fpsr = v.reg(hvf.RegFPSR)
-	*fpcr = v.reg(hvf.RegFPCR)
-	for i := range q {
-		val, err := v.v.SIMDFPReg(i)
-		must(err)
-		q[i] = val
-	}
 }
 
 // inVectors returns the vector of a PC in the vector table, or -1.
@@ -193,30 +213,42 @@ func inVectors(pc uint64) int {
 // switchTo runs the application state ac in as until an exception that the
 // Sentry must handle.
 func (v *vcpu) switchTo(c *context, as *addressSpace, ac *arch.Context64) (hostarch.AccessType, error) {
-	v.loadState(ac)
+	// The application state goes into the vCPU with the first entry. Until
+	// then, the vCPU registers do not hold it.
+	v.addLoad(ac)
+	loaded := false
 	pc := ac.StateData().Regs.Pc
 	pstate := ac.StateData().Regs.Pstate &^ (pstateModeMask | pstateDAIF)
 	if ttbr0 := as.pt.TTBR0_EL1(false, 0); ttbr0 != v.ttbr0 {
-		must(v.v.SetSysReg(hvf.SysRegTTBR0EL1, ttbr0))
+		v.batch.SetSysReg(hvf.SysRegTTBR0EL1, ttbr0)
 		v.ttbr0 = ttbr0
 	}
 	for {
 		if c.kicked.Swap(false) {
-			v.saveState(ac, pc, pstate)
+			if loaded {
+				v.saveState(ac, pc, pstate)
+			} else {
+				// ac is the application state; only TTBR0_EL1 must
+				// still go into the vCPU.
+				v.batch.Reset()
+				must(v.v.SetSysReg(hvf.SysRegTTBR0EL1, v.ttbr0))
+			}
 			return hostarch.NoAccess, platform.ErrContextInterrupt
 		}
 		v.inGuest.Store(true)
 		gen := as.gen.Load()
 		flush := v.lastASID != as.id || v.lastGen != gen
 		if flush {
-			must(v.v.SetSysReg(hvf.SysRegELREL1, pc))
-			must(v.v.SetSysReg(hvf.SysRegSPSREL1, pstate))
-			must(v.v.SetReg(hvf.RegPC, stubVA+flushOffset))
-			must(v.v.SetReg(hvf.RegCPSR, pstateEL1h))
+			v.batch.SetSysReg(hvf.SysRegELREL1, pc)
+			v.batch.SetSysReg(hvf.SysRegSPSREL1, pstate)
+			v.batch.SetReg(hvf.RegPC, stubVA+flushOffset)
+			v.batch.SetReg(hvf.RegCPSR, pstateEL1h)
 		} else {
-			must(v.v.SetReg(hvf.RegPC, pc))
-			must(v.v.SetReg(hvf.RegCPSR, pstate))
+			v.batch.SetReg(hvf.RegPC, pc)
+			v.batch.SetReg(hvf.RegCPSR, pstate)
 		}
+		v.doBatch()
+		loaded = true
 		err := v.v.Run()
 		v.inGuest.Store(false)
 		v.runs.Add(1)
@@ -306,23 +338,26 @@ const (
 // application state is in the vCPU, with PC and PSTATE in ELR_EL1 and
 // SPSR_EL1.
 func (v *vcpu) vector(c *context, ac *arch.Context64, vec int) (hostarch.AccessType, error) {
-	esr := v.sysReg(hvf.SysRegESREL1)
-	elr := v.sysReg(hvf.SysRegELREL1)
-	far := v.sysReg(hvf.SysRegFAREL1)
-	spsr := v.sysReg(hvf.SysRegSPSREL1)
+	// Read the exception registers and save the application state in one
+	// batch. PC and PSTATE are in ELR_EL1 and SPSR_EL1.
+	regs := &ac.StateData().Regs
+	v.batch.SysReg(hvf.SysRegESREL1, &v.esr)
+	v.batch.SysReg(hvf.SysRegFAREL1, &v.far)
+	v.batch.SysReg(hvf.SysRegELREL1, &regs.Pc)
+	v.batch.SysReg(hvf.SysRegSPSREL1, &regs.Pstate)
+	v.addSave(ac)
+	v.doBatch()
+	esr, far, elr, spsr := v.esr, v.far, regs.Pc, regs.Pstate
 	switch vec {
 	case vectorEL0Sync:
 	case vectorEL0IRQ, vectorEL0FIQ:
-		v.saveState(ac, elr, spsr)
 		return hostarch.NoAccess, platform.ErrContextInterrupt
 	case vectorEL0SError:
-		v.saveState(ac, elr, spsr)
 		c.info = signalInfo(linux.SIGBUS, busObjErr, 0)
 		return hostarch.NoAccess, platform.ErrContextSignal
 	default:
 		panic(fmt.Sprintf("hvf: guest exception at EL1: vector %d, ESR %#x, ELR %#x, FAR %#x, SPSR %#x", vec, esr, elr, far, spsr))
 	}
-	v.saveState(ac, elr, spsr)
 	addr := uint64(hostarch.UntaggedUserAddr(hostarch.Addr(far)))
 	switch ec := (esr >> esrECShift) & esrECMask; ec {
 	case ecSVC64:
