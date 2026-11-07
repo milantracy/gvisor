@@ -27,7 +27,7 @@ import (
 
 func randomFilename() (string, error) {
 	// Return a randomly generated file in the test dir.
-	f, err := os.CreateTemp("", "unet-test")
+	f, err := os.CreateTemp(socketDir, "unet-test")
 	if err != nil {
 		return "", err
 	}
@@ -226,6 +226,9 @@ func TestSymmetric(t *testing.T) {
 }
 
 func TestPacket(t *testing.T) {
+	if !havePacket {
+		t.Skip("no AF_UNIX SOCK_SEQPACKET on this host")
+	}
 	server, client := socketPair(t, true)
 	defer server.Close()
 	defer client.Close()
@@ -427,7 +430,7 @@ func recvFDs(t *testing.T, s *Socket, enableSize int, origFDs []int) {
 	expected := len(origFDs)
 
 	// Count the number of FDs.
-	preEntries, err := os.ReadDir("/proc/self/fd")
+	preEntries, err := os.ReadDir(fdDir)
 	if err != nil {
 		t.Fatalf("Can't readdir, got err %v expected nil", err)
 	}
@@ -446,7 +449,7 @@ func recvFDs(t *testing.T, s *Socket, enableSize int, origFDs []int) {
 	}
 
 	// Count the new number of FDs.
-	postEntries, err := os.ReadDir("/proc/self/fd")
+	postEntries, err := os.ReadDir(fdDir)
 	if err != nil {
 		t.Fatalf("Can't readdir, got err %v expected nil", err)
 	}
@@ -479,7 +482,7 @@ func recvFDs(t *testing.T, s *Socket, enableSize int, origFDs []int) {
 	r.CloseFDs()
 
 	// Make sure the count is back to normal.
-	finalEntries, err := os.ReadDir("/proc/self/fd")
+	finalEntries, err := os.ReadDir(fdDir)
 	if err != nil {
 		t.Fatalf("Can't readdir, got err %v expected nil", err)
 	}
@@ -527,6 +530,9 @@ func TestFDsReceiveLargeBuffer(t *testing.T) {
 }
 
 func TestFDsReceiveSmallBuffer(t *testing.T) {
+	if !truncatedRightsClosed {
+		t.Skip("the host does not close file descriptors that do not fit in the control buffer")
+	}
 	server, client := socketPair(t, false)
 	defer server.Close()
 	defer client.Close()
@@ -539,6 +545,9 @@ func TestFDsReceiveSmallBuffer(t *testing.T) {
 }
 
 func TestFDsReceiveNotEnabled(t *testing.T) {
+	if !truncatedRightsClosed {
+		t.Skip("the host does not close file descriptors that do not fit in the control buffer")
+	}
 	server, client := socketPair(t, false)
 	defer server.Close()
 	defer client.Close()
@@ -548,6 +557,9 @@ func TestFDsReceiveNotEnabled(t *testing.T) {
 }
 
 func TestFDsReceiveSizeZero(t *testing.T) {
+	if !truncatedRightsClosed {
+		t.Skip("the host does not close file descriptors that do not fit in the control buffer")
+	}
 	server, client := socketPair(t, false)
 	defer server.Close()
 	defer client.Close()

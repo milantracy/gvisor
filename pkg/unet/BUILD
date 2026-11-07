@@ -26,6 +26,8 @@ go_test(
     name = "unet_test",
     size = "small",
     srcs = [
+        "unet_darwin_test.go",
+        "unet_linux_test.go",
         "unet_test.go",
     ],
     embed = [":unet"],
