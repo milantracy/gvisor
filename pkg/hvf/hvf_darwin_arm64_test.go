@@ -17,9 +17,6 @@ package hvf
 import (
 	"errors"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -28,67 +25,12 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/unix"
+	"gvisor.dev/gvisor/pkg/hvf/hvftest"
 )
 
-// signedEnv is set in the environment of the signed copy of the test.
-const signedEnv = "HVF_TEST_SIGNED"
-
-const entitlements = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>com.apple.security.hypervisor</key>
-	<true/>
-</dict>
-</plist>
-`
-
-// TestMain runs the tests in a copy of the test binary that is ad-hoc signed
-// with the hypervisor entitlement. If signing fails, the tests run unsigned
-// and skip.
+// TestMain runs the tests in a binary with the hypervisor entitlement.
 func TestMain(m *testing.M) {
-	if os.Getenv(signedEnv) == "" {
-		if code, ok := runSigned(); ok {
-			os.Exit(code)
-		}
-	}
-	os.Exit(m.Run())
-}
-
-func runSigned() (int, bool) {
-	exe, err := os.Executable()
-	if err != nil {
-		return 0, false
-	}
-	dir, err := os.MkdirTemp("", "hvf_test")
-	if err != nil {
-		return 0, false
-	}
-	defer os.RemoveAll(dir)
-	data, err := os.ReadFile(exe)
-	if err != nil {
-		return 0, false
-	}
-	bin := filepath.Join(dir, "hvf_test")
-	plist := filepath.Join(dir, "hvf.entitlements")
-	if os.WriteFile(bin, data, 0755) != nil || os.WriteFile(plist, []byte(entitlements), 0644) != nil {
-		return 0, false
-	}
-	if out, err := exec.Command("/usr/bin/codesign", "-f", "-s", "-", "--entitlements", plist, bin).CombinedOutput(); err != nil {
-		fmt.Fprintf(os.Stderr, "codesign: %v: %s\n", err, out)
-		return 0, false
-	}
-	cmd := exec.Command(bin, os.Args[1:]...)
-	cmd.Env = append(os.Environ(), signedEnv+"=1")
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Run(); err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			return ee.ExitCode(), true
-		}
-		return 0, false
-	}
-	return 0, true
+	hvftest.Main(m)
 }
 
 const (
