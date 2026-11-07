@@ -31,7 +31,7 @@ func TestSetNegOne(t *testing.T) {
 	}
 	var tests []entry
 
-	fd, err := unix.Socket(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	fd, err := unix.Socket(unix.AF_UNIX, unix.SOCK_STREAM, 0)
 	if err != nil {
 		t.Fatal("unix.Socket:", err)
 	}
@@ -44,7 +44,7 @@ func TestSetNegOne(t *testing.T) {
 		},
 	})
 
-	fd, err = unix.Socket(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	fd, err = unix.Socket(unix.AF_UNIX, unix.SOCK_STREAM, 0)
 	if err != nil {
 		t.Fatal("unix.Socket:", err)
 	}
@@ -87,7 +87,7 @@ func TestStartsNegOne(t *testing.T) {
 }
 
 func TestFileDotFile(t *testing.T) {
-	fd, err := unix.Socket(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+	fd, err := unix.Socket(unix.AF_UNIX, unix.SOCK_STREAM, 0)
 	if err != nil {
 		t.Fatal("unix.Socket:", err)
 	}
