@@ -23,6 +23,7 @@ go_library(
         "signal.go",
         "socket.go",
         "strace.go",
+        "strace_linux.go",
         "syscalls.go",
     ],
     visibility = ["//:sandbox"],

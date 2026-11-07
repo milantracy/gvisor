@@ -28,7 +28,6 @@ import (
 	"gvisor.dev/gvisor/pkg/eventchannel"
 	"gvisor.dev/gvisor/pkg/hostarch"
 	"gvisor.dev/gvisor/pkg/marshal/primitive"
-	"gvisor.dev/gvisor/pkg/seccomp"
 	"gvisor.dev/gvisor/pkg/sentry/arch"
 	"gvisor.dev/gvisor/pkg/sentry/kernel"
 	pb "gvisor.dev/gvisor/pkg/sentry/strace/strace_go_proto"
@@ -842,15 +841,5 @@ func EnableAll(sinks SinkType) {
 		}
 
 		table.FeatureEnable.EnableAll(flags)
-	}
-}
-
-func init() {
-	t, ok := Lookup(abi.Host, arch.Host)
-	if ok {
-		// Provide the native table as the lookup for seccomp
-		// debugging. This is best-effort. This is provided this way to
-		// avoid dependencies from seccomp to this package.
-		seccomp.SyscallName = t.Name
 	}
 }
