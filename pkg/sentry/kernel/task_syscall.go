@@ -478,9 +478,9 @@ func ExtractErrno(err error, sysno int) int {
 	case nil:
 		return 0
 	case unix.Errno:
-		return int(err)
+		return int(linuxerr.HostToLinux(err))
 	case *errors.Error:
-		return int(linuxerr.ToUnix(err))
+		return int(linuxerr.HostToLinux(linuxerr.ToUnix(err)))
 	case *memmap.BusError:
 		// Bus errors may generate SIGBUS, but for syscalls they still
 		// return EFAULT. See case in task_run.go where the fault is
@@ -500,7 +500,7 @@ func ExtractErrno(err error, sysno int) int {
 		return int(err.Errno)
 	default:
 		if errno, ok := linuxerr.TranslateError(err); ok {
-			return int(linuxerr.ToUnix(errno))
+			return int(linuxerr.HostToLinux(linuxerr.ToUnix(errno)))
 		}
 	}
 	panic(fmt.Sprintf("Unknown syscall %d error: %v", sysno, err))
