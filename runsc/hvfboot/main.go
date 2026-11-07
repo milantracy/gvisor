@@ -251,7 +251,17 @@ func run(plat *hvf.HVF, imagePath string, argv []string) (int, error) {
 		return 0, fmt.Errorf("starting the kernel: %w", err)
 	}
 	k.WaitExited()
-	return int(tg.ExitStatus().ExitStatus()), nil
+	return exitCode(tg.ExitStatus()), nil
+}
+
+// exitCode returns the exit code of a process with status ws, as a shell
+// reports it: the exit status, or 128 plus the number of the signal that
+// killed the process.
+func exitCode(ws linux.WaitStatus) int {
+	if ws.Signaled() {
+		return 128 + int(ws.TerminationSignal())
+	}
+	return int(ws.ExitStatus())
 }
 
 // mountAt mounts a new filesystem of type fsType at target in mntns. The target
