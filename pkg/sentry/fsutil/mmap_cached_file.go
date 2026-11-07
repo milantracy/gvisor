@@ -21,6 +21,7 @@ import (
 	"gvisor.dev/gvisor/pkg/atomicbitops"
 	"gvisor.dev/gvisor/pkg/hostarch"
 	"gvisor.dev/gvisor/pkg/log"
+	"gvisor.dev/gvisor/pkg/memutil"
 	"gvisor.dev/gvisor/pkg/safemem"
 	"gvisor.dev/gvisor/pkg/sentry/memmap"
 )
@@ -238,6 +239,7 @@ func (f *MmapCachedFile) decRefUnaccounted(fr memmap.FileRange) {
 //
 // +checklocks:f.mapsMu
 func (f *MmapCachedFile) unmapAndRemove(chunkStart uint64, m mapping) {
+	memutil.WillUnmap(m.addr, uintptr(chunkSize()))
 	if _, _, errno := unix.Syscall(unix.SYS_MUNMAP, m.addr, uintptr(chunkSize()), 0); errno != 0 {
 		// This leaks address space and is unexpected, but is otherwise
 		// harmless, so complain but don't panic.
@@ -297,6 +299,7 @@ func (f *MmapCachedFile) forEachMappingBlockLocked(fr memmap.FileRange, write bo
 			m = mapping{addr, write}
 			f.mappings[chunkStart] = m
 		} else if write && !m.writable {
+			memutil.WillReplace(m.addr, uintptr(chunkSize()))
 			addr, _, errno := unix.Syscall6(
 				unix.SYS_MMAP,
 				m.addr,
@@ -349,6 +352,7 @@ func (f *MmapCachedFile) RegenerateMappings() error {
 		if m.writable {
 			prot |= unix.PROT_WRITE
 		}
+		memutil.WillReplace(m.addr, uintptr(chunkSize()))
 		_, _, errno := unix.Syscall6(
 			unix.SYS_MMAP,
 			m.addr,

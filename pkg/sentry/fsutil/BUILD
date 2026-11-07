@@ -139,6 +139,7 @@ go_library(
         "//pkg/errors/linuxerr",
         "//pkg/hostarch",
         "//pkg/log",
+        "//pkg/memutil",
         "//pkg/safemem",
         "//pkg/sentry/arch",
         "//pkg/sentry/ktime",

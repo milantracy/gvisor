@@ -251,7 +251,7 @@ func OpenImage(src *os.File) (*Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	i.bytes, err = unix.Mmap(int(i.src.Fd()), 0, int(stat.Size()), unix.PROT_READ, unix.MAP_SHARED)
+	i.bytes, err = unix.Mmap(int(i.src.Fd()), 0, int(stat.Size()), unix.PROT_READ, imageMapFlags)
 	if err != nil {
 		return nil, err
 	}
@@ -266,6 +266,7 @@ func OpenImage(src *os.File) (*Image, error) {
 
 // Close closes the image.
 func (i *Image) Close() {
+	i.willUnmap()
 	unix.Munmap(i.bytes)
 	i.src.Close()
 }

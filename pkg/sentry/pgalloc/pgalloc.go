@@ -37,6 +37,7 @@ import (
 	"gvisor.dev/gvisor/pkg/errors/linuxerr"
 	"gvisor.dev/gvisor/pkg/hostarch"
 	"gvisor.dev/gvisor/pkg/log"
+	"gvisor.dev/gvisor/pkg/memutil"
 	"gvisor.dev/gvisor/pkg/safemem"
 	"gvisor.dev/gvisor/pkg/sentry/checkpoint"
 	"gvisor.dev/gvisor/pkg/sentry/hostmm"
@@ -519,6 +520,7 @@ func (f *MemoryFile) releaserDestroyLocked() {
 	chunks := f.chunksLoad()
 	for i := range chunks {
 		chunk := &chunks[i]
+		memutil.WillUnmap(chunk.mapping, chunkSize)
 		_, _, errno := unix.Syscall(unix.SYS_MUNMAP, chunk.mapping, chunkSize, 0)
 		if errno != 0 {
 			log.Warningf("Failed to unmap mapping %#x for MemoryFile chunk %d: %v", chunk.mapping, i, errno)
