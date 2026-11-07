@@ -16,6 +16,7 @@ package eventfd
 
 import (
 	"math"
+	"runtime"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -102,6 +103,9 @@ func TestEventFDStat(t *testing.T) {
 }
 
 func TestHostFDPreservesCounter(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("host eventfds exist only on Linux")
+	}
 	for _, tc := range []struct {
 		name  string
 		count uint64
