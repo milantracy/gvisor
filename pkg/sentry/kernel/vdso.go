@@ -68,7 +68,7 @@ type vdsoParams struct {
 //
 // +stateify savable
 type VDSOParamPage struct {
-	// The parameter page is fr, allocated from mf.
+	// The parameters are at fr, in the parameter page allocated from mf.
 	mf *pgalloc.MemoryFile `state:"nosave"`
 	fr memmap.FileRange
 
@@ -94,6 +94,13 @@ func (v *VDSOParamPage) afterLoad(ctx context.Context) {
 	v.mf = pgalloc.MemoryFileFromContext(ctx)
 }
 
+// vdsoParamsSize is the size of the parameter area. The vDSO reads its
+// parameters at vdsoParamsSize bytes below its base (_params in
+// vdso/vdso_*.lds), and the parameter page is mapped just below the vDSO.
+// So the parameters are in the last vdsoParamsSize bytes of the page, which
+// is the whole page if hostarch.PageSize is 4 KiB.
+const vdsoParamsSize = 0x1000
+
 // NewVDSOParamPage returns a VDSOParamPage.
 //
 // Preconditions:
@@ -105,7 +112,7 @@ func (v *VDSOParamPage) afterLoad(ctx context.Context) {
 func NewVDSOParamPage(mf *pgalloc.MemoryFile, fr memmap.FileRange) *VDSOParamPage {
 	return &VDSOParamPage{
 		mf:                mf,
-		fr:                fr,
+		fr:                memmap.FileRange{Start: fr.End - vdsoParamsSize, End: fr.End},
 		copyScratchBuffer: make([]byte, (*vdsoParams)(nil).SizeBytes()),
 	}
 }
