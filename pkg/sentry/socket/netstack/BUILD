@@ -23,6 +23,8 @@ go_library(
         "provider.go",
         "socketopt_custom.go",
         "stack.go",
+        "sysno_amd64.go",
+        "sysno_arm64.go",
         "tun.go",
     ],
     imports = [
