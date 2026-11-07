@@ -25,9 +25,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// Size of a page in bytes. Cloned from hostarch.PageSize to avoid a circular
-// dependency.
-const pageSize = 4096
+// Size of a host page in bytes. hostarch.PageSize is not used, to avoid a
+// circular dependency, and because it can be smaller than the host page.
+var pageSize = os.Getpagesize()
 
 func initRandom(b []byte) {
 	for i := range b {
@@ -221,7 +221,8 @@ func TestCompareAndSwapUint32AlignmentError(t *testing.T) {
 }
 
 // withSegvErrorTestMapping calls fn with a two-page mapping. The first page
-// contains random data, and the second page generates SIGSEGV when accessed.
+// contains random data, and the second page is PROT_NONE. An access to it
+// fails with protNoneFault.
 func withSegvErrorTestMapping(t *testing.T, fn func(m []byte)) {
 	mapping, err := unix.Mmap(-1, 0, 2*pageSize, unix.PROT_READ|unix.PROT_WRITE, unix.MAP_ANONYMOUS|unix.MAP_PRIVATE)
 	if err != nil {
@@ -244,7 +245,7 @@ func withBusErrorTestMapping(t *testing.T, fn func(m []byte)) {
 		t.Fatalf("TempFile failed: %v", err)
 	}
 	defer f.Close()
-	if err := f.Truncate(pageSize); err != nil {
+	if err := f.Truncate(int64(pageSize)); err != nil {
 		t.Fatalf("Truncate failed: %v", err)
 	}
 	mapping, err := unix.Mmap(int(f.Fd()), 0, 2*pageSize, unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED)
@@ -270,7 +271,7 @@ func TestCopyInSegvError(t *testing.T) {
 				if n != bytesBeforeFault {
 					t.Errorf("Unexpected copy length: got %v, want %v", n, bytesBeforeFault)
 				}
-				if want := (SegvError{secondPage}); err != want {
+				if want := protNoneFault(secondPage); err != want {
 					t.Errorf("Unexpected error: got %v, want %v", err, want)
 				}
 				if got, want := dst[:bytesBeforeFault], mapping[pageSize-bytesBeforeFault:pageSize]; !bytes.Equal(got, want) {
@@ -318,7 +319,7 @@ func TestCopyOutSegvError(t *testing.T) {
 				if n != bytesBeforeFault {
 					t.Errorf("Unexpected copy length: got %v, want %v", n, bytesBeforeFault)
 				}
-				if want := (SegvError{secondPage}); err != want {
+				if want := protNoneFault(secondPage); err != want {
 					t.Errorf("Unexpected error: got %v, want %v", err, want)
 				}
 				if got, want := mapping[pageSize-bytesBeforeFault:pageSize], src[:bytesBeforeFault]; !bytes.Equal(got, want) {
@@ -362,11 +363,11 @@ func TestCopySourceSegvError(t *testing.T) {
 				secondPage := uintptr(unsafe.Pointer(&mapping[pageSize]))
 				src := unsafe.Pointer(&mapping[pageSize-bytesBeforeFault])
 				dst := randBuf(pageSize)
-				n, err := Copy(unsafe.Pointer(&dst[0]), src, pageSize)
+				n, err := Copy(unsafe.Pointer(&dst[0]), src, uintptr(pageSize))
 				if n != uintptr(bytesBeforeFault) {
 					t.Errorf("Unexpected copy length: got %v, want %v", n, bytesBeforeFault)
 				}
-				if want := (SegvError{secondPage}); err != want {
+				if want := protNoneFault(secondPage); err != want {
 					t.Errorf("Unexpected error: got %v, want %v", err, want)
 				}
 				if got, want := dst[:bytesBeforeFault], mapping[pageSize-bytesBeforeFault:pageSize]; !bytes.Equal(got, want) {
@@ -386,7 +387,7 @@ func TestCopySourceBusError(t *testing.T) {
 				secondPage := uintptr(unsafe.Pointer(&mapping[pageSize]))
 				src := unsafe.Pointer(&mapping[pageSize-bytesBeforeFault])
 				dst := randBuf(pageSize)
-				n, err := Copy(unsafe.Pointer(&dst[0]), src, pageSize)
+				n, err := Copy(unsafe.Pointer(&dst[0]), src, uintptr(pageSize))
 				if n != uintptr(bytesBeforeFault) {
 					t.Errorf("Unexpected copy length: got %v, want %v", n, bytesBeforeFault)
 				}
@@ -410,11 +411,11 @@ func TestCopyDestinationSegvError(t *testing.T) {
 				secondPage := uintptr(unsafe.Pointer(&mapping[pageSize]))
 				dst := unsafe.Pointer(&mapping[pageSize-bytesBeforeFault])
 				src := randBuf(pageSize)
-				n, err := Copy(dst, unsafe.Pointer(&src[0]), pageSize)
+				n, err := Copy(dst, unsafe.Pointer(&src[0]), uintptr(pageSize))
 				if n != uintptr(bytesBeforeFault) {
 					t.Errorf("Unexpected copy length: got %v, want %v", n, bytesBeforeFault)
 				}
-				if want := (SegvError{secondPage}); err != want {
+				if want := protNoneFault(secondPage); err != want {
 					t.Errorf("Unexpected error: got %v, want %v", err, want)
 				}
 				if got, want := mapping[pageSize-bytesBeforeFault:pageSize], src[:bytesBeforeFault]; !bytes.Equal(got, want) {
@@ -434,7 +435,7 @@ func TestCopyDestinationBusError(t *testing.T) {
 				secondPage := uintptr(unsafe.Pointer(&mapping[pageSize]))
 				dst := unsafe.Pointer(&mapping[pageSize-bytesBeforeFault])
 				src := randBuf(pageSize)
-				n, err := Copy(dst, unsafe.Pointer(&src[0]), pageSize)
+				n, err := Copy(dst, unsafe.Pointer(&src[0]), uintptr(pageSize))
 				if n != uintptr(bytesBeforeFault) {
 					t.Errorf("Unexpected copy length: got %v, want %v", n, bytesBeforeFault)
 				}
@@ -457,11 +458,11 @@ func TestZeroOutSegvError(t *testing.T) {
 			withSegvErrorTestMapping(t, func(mapping []byte) {
 				secondPage := uintptr(unsafe.Pointer(&mapping[pageSize]))
 				dst := unsafe.Pointer(&mapping[pageSize-bytesBeforeFault])
-				n, err := ZeroOut(dst, pageSize)
+				n, err := ZeroOut(dst, uintptr(pageSize))
 				if n != uintptr(bytesBeforeFault) {
 					t.Errorf("Unexpected write length: got %v, want %v", n, bytesBeforeFault)
 				}
-				if want := (SegvError{secondPage}); err != want {
+				if want := protNoneFault(secondPage); err != want {
 					t.Errorf("Unexpected error: got %v, want %v", err, want)
 				}
 				if got, want := mapping[pageSize-bytesBeforeFault:pageSize], make([]byte, bytesBeforeFault); !bytes.Equal(got, want) {
@@ -480,7 +481,7 @@ func TestZeroOutBusError(t *testing.T) {
 			withBusErrorTestMapping(t, func(mapping []byte) {
 				secondPage := uintptr(unsafe.Pointer(&mapping[pageSize]))
 				dst := unsafe.Pointer(&mapping[pageSize-bytesBeforeFault])
-				n, err := ZeroOut(dst, pageSize)
+				n, err := ZeroOut(dst, uintptr(pageSize))
 				if n != uintptr(bytesBeforeFault) {
 					t.Errorf("Unexpected write length: got %v, want %v", n, bytesBeforeFault)
 				}
@@ -501,7 +502,7 @@ func TestSwapUint32SegvError(t *testing.T) {
 	withSegvErrorTestMapping(t, func(mapping []byte) {
 		secondPage := uintptr(unsafe.Pointer(&mapping[pageSize]))
 		_, err := SwapUint32(unsafe.Pointer(secondPage), 1)
-		if want := (SegvError{secondPage}); err != want {
+		if want := protNoneFault(secondPage); err != want {
 			t.Errorf("Unexpected error: got %v, want %v", err, want)
 		}
 	})
@@ -525,7 +526,7 @@ func TestSwapUint64SegvError(t *testing.T) {
 	withSegvErrorTestMapping(t, func(mapping []byte) {
 		secondPage := uintptr(unsafe.Pointer(&mapping[pageSize]))
 		_, err := SwapUint64(unsafe.Pointer(secondPage), 1)
-		if want := (SegvError{secondPage}); err != want {
+		if want := protNoneFault(secondPage); err != want {
 			t.Errorf("Unexpected error: got %v, want %v", err, want)
 		}
 	})
@@ -549,7 +550,7 @@ func TestCompareAndSwapUint32SegvError(t *testing.T) {
 	withSegvErrorTestMapping(t, func(mapping []byte) {
 		secondPage := uintptr(unsafe.Pointer(&mapping[pageSize]))
 		_, err := CompareAndSwapUint32(unsafe.Pointer(secondPage), 0, 1)
-		if want := (SegvError{secondPage}); err != want {
+		if want := protNoneFault(secondPage); err != want {
 			t.Errorf("Unexpected error: got %v, want %v", err, want)
 		}
 	})
@@ -565,4 +566,16 @@ func TestCompareAndSwapUint32BusError(t *testing.T) {
 			t.Errorf("Unexpected error: got %v, want %v", err, want)
 		}
 	})
+}
+
+func TestFaultOutsideSafecopyReachesGoRuntime(t *testing.T) {
+	// A fault that is not in a safecopy function goes to the previous
+	// handler, so the Go runtime turns it into a recoverable panic.
+	var p *int
+	defer func() {
+		if r := recover(); r == nil {
+			t.Errorf("nil dereference did not panic")
+		}
+	}()
+	_ = *p
 }
