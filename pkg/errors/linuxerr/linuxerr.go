@@ -324,18 +324,31 @@ var errorSlice = []*errors.Error{
 	errno.EHWPOISON:       EHWPOISON,
 }
 
-// ErrorFromUnix returns a linuxerr from a unix.Errno.
+// ErrorFromUnix returns a linuxerr from a host unix.Errno.
 func ErrorFromUnix(err unix.Errno) error {
 	if err == unix.Errno(0) {
 		return nil
 	}
-	e := errorSlice[errno.Errno(err)]
+	e := errorSlice[hostToLinux(err)]
 	// Done this way because a single comparison in benchmarks is 2-3 faster
 	// than something like ( if err == nil && err > 0 ).
 	if e == errNotValidError {
 		panic(fmt.Sprintf("invalid error requested with errno: %v", e))
 	}
 	return e
+}
+
+// FromErrno returns the linuxerr error for a Linux errno. It returns false if
+// there is none.
+func FromErrno(e errno.Errno) (*errors.Error, bool) {
+	if e == 0 || int(e) >= len(errorSlice) {
+		return nil, false
+	}
+	err := errorSlice[e]
+	if err == nil || err == errNotValidError {
+		return nil, false
+	}
+	return err, true
 }
 
 // ToError converts a linuxerr to an error type.
@@ -346,11 +359,11 @@ func ToError(err *errors.Error) error {
 	return err
 }
 
-// ToUnix converts a linuxerr to a unix.Errno.
+// ToUnix converts a linuxerr to a host unix.Errno.
 func ToUnix(e *errors.Error) unix.Errno {
 	var unixErr unix.Errno
 	if e != noError {
-		unixErr = unix.Errno(e.Errno())
+		unixErr = linuxToHost(e.Errno())
 	}
 	return unixErr
 }
@@ -359,7 +372,7 @@ func ToUnix(e *errors.Error) unix.Errno {
 func Equals(e *errors.Error, err error) bool {
 	var unixErr unix.Errno
 	if e != noError {
-		unixErr = unix.Errno(e.Errno())
+		unixErr = linuxToHost(e.Errno())
 	}
 	if err == nil {
 		err = noError
