@@ -38,9 +38,10 @@ Native Bazel works on the Mac. No Docker and no `make` wrapper are needed.
     github.com/bazelbuild/bazelisk@v1.26.0`; nothing system-wide.
 -   The host platform is `darwin_arm64`; Bazel downloads the darwin Go SDK.
     `//pkg/abi/linux` builds from a cold cache in 2 min 47 s.
--   With no flags, `hostarch` selects the `arm64_4k` variant. A
-    `//tools/bazeldefs:page_size` flag exists (values include `64k`), which
-    is where a `16k` value belongs.
+-   `.bazelrc` sets `--//tools/bazeldefs:page_size=16k` on macOS hosts
+    (`build:macos`), so `hostarch`, `ring0` and `pagetables` use 16K pages.
+    See [16K pages](#16k-pages). A Linux cross-build from the Mac must set
+    `--//tools/bazeldefs:page_size=4k` for a 4K Linux host.
 
 ## First pass over the demo path
 
@@ -192,8 +193,10 @@ These differ from Linux and matter beyond the build:
 -   **No file seals.** The flipcall packet window cannot get
     `F_SEAL_SHRINK`, so a peer that truncates it causes SIGBUS in the other
     party.
--   Tests print "host page size mismatch - running on non-4K host", because
-    `hostarch` uses the 4K variant on a 16K host.
+-   **`ID_AA64MMFR0_EL1` is not readable from EL0.** Linux emulates the
+    `mrs`; macOS raises SIGILL. `pagetables` read it in `init`, so every
+    binary that imported it crashed at startup. On darwin, `pagetables` uses
+    8-bit ASIDs, which all implementations support.
 
 ### Build rules
 
@@ -257,6 +260,37 @@ thread (`ExitCanceled`).
 
 `BenchmarkHVCRoundTrip` (5 runs, 2026-11-07): 713 to 730 ns per HVC exit and
 re-entry, against about 680 ns for the C probe 1 (`phase0-results.md`).
+
+## 16K pages
+
+The `pagesize_16k` build tag (`--//tools/bazeldefs:page_size=16k`) selects:
+
+-   `hostarch`: `PageShift` 14, `HugePageShift` 25 (32 MiB).
+-   `pagetables`: four levels for a 48-bit VA. The top level has two entries
+    (bit 47); the other levels have 2048 entries (11 bits). The 16K granule
+    has no level 1 block descriptors without FEAT_LPA2, so the walker makes
+    PMD blocks (32 MiB) and pages only (`pudSect`). The 4K walker is shared.
+-   `ring0`: initial page table offsets in 16K steps.
+
+The vDSO reads its parameters 4 KiB below its base (`_params` in
+`vdso/vdso_*.lds`), and the parameter page (one `PageSize` page) is mapped
+just below the vDSO. So `kernel.NewVDSOParamPage` writes the parameters in
+the last 4 KiB of the page. With 4K pages this is the whole page, so
+nothing changes on Linux. The 64K variant had the same problem.
+
+Results, 2026-11-07:
+
+| Target | 16k on darwin | 4k on darwin | linux/arm64 (4k) |
+|---|---|---|---|
+| `pagetables` | pass | pass | pass |
+| `hostarch` | pass | pass | pass |
+| `pgalloc`, `tmpfs`, `fsutil`, `memmap`, `fsimpl/host`, `hvf` | pass | | |
+| 12 demo-path targets | build | build | |
+
+`pagetables` tests that hard-coded 4K offsets now use `pteSize`.
+`Test1GAnd4K` expects 32 MiB blocks when `pudSect` is false. `mm_test` does
+not build on darwin at any page size (it uses memfd seals). `systrap` still
+has 4K and 64K variants only; it is not built on darwin.
 
 ## vDSO
 

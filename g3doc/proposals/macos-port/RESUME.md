@@ -67,8 +67,10 @@ Mac. The first and second layers are done (see the progress table in
 requirement 7). All 12 demo-path targets build on darwin (2026-11-07). Host
 TTYs are not supported yet (stdio as pipes or files). `pkg/hvf`, the
 cgo-free Hypervisor.framework binding, is done; its test runs guest code and
-an HVC round trip costs about 720 ns from Go (2026-11-07). Next: the
-`pagesize_16k` variant, the IPA registry, then the `hvf` platform.
+an HVC round trip costs about 720 ns from Go (2026-11-07). The
+`pagesize_16k` variant is done and is the default on macOS hosts
+(`.bazelrc`); the vDSO parameters are now in the last 4 KiB of the
+parameter page. Next: the IPA registry, then the `hvf` platform.
 
 ## Phase 0 probe plan (done)
 
