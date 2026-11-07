@@ -41,16 +41,10 @@ var libc_os_sync_wake_by_address_any_trampoline_addr uintptr
 
 //go:cgo_import_dynamic libc_os_sync_wake_by_address_any os_sync_wake_by_address_any "/usr/lib/libSystem.B.dylib"
 
-// waitThread blocks the calling thread while *addr is val. It does not tell
-// the Go scheduler, so it is only for a thread that is locked to its
-// goroutine and has nothing else to run. It can return early.
-func waitThread(addr *uint32, val uint32) {
-	syscall_rawSyscall(libc_os_sync_wait_on_address_trampoline_addr, uintptr(unsafe.Pointer(addr)), uintptr(val), 4)
-}
-
-// waitGoroutine blocks the calling goroutine while *addr is val, and lets the
-// Go scheduler run other goroutines meanwhile. It can return early.
-func waitGoroutine(addr *uint32, val uint32) {
+// waitOn blocks the calling goroutine while *addr is val. It can return
+// early. It releases the P of the goroutine while it blocks: a vCPU thread
+// that kept its P would keep other goroutines from running.
+func waitOn(addr *uint32, val uint32) {
 	syscall_syscall6(libc_os_sync_wait_on_address_trampoline_addr, uintptr(unsafe.Pointer(addr)), uintptr(val), 4, 0, 0, 0)
 }
 

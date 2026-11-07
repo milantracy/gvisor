@@ -63,7 +63,7 @@ func (p *HVF) claim(last *vcpu) *vcpu {
 		}
 		// All vCPUs are busy. release changes freeSeq after it frees one.
 		atomic.AddInt32(&p.claimWaiters, 1)
-		waitGoroutine(&p.freeSeq, seq)
+		waitOn(&p.freeSeq, seq)
 		atomic.AddInt32(&p.claimWaiters, -1)
 	}
 }
@@ -92,7 +92,7 @@ func (v *vcpu) next() *switchRequest {
 		for atomic.LoadUint32(&v.mbox) == 0 {
 			atomic.StoreUint32(&v.sleeping, 1)
 			if atomic.LoadUint32(&v.mbox) == 0 {
-				waitThread(&v.mbox, 0)
+				waitOn(&v.mbox, 0)
 			}
 			atomic.StoreUint32(&v.sleeping, 0)
 		}
@@ -119,7 +119,7 @@ func (r *switchRequest) wait() {
 	for atomic.LoadUint32(&r.done) == 0 {
 		atomic.StoreUint32(&r.sleeping, 1)
 		if atomic.LoadUint32(&r.done) == 0 {
-			waitGoroutine(&r.done, 0)
+			waitOn(&r.done, 0)
 		}
 		atomic.StoreUint32(&r.sleeping, 0)
 	}
