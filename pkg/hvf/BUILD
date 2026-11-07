@@ -22,5 +22,8 @@ go_test(
     srcs = ["hvf_darwin_arm64_test.go"],
     library = ":hvf",
     tags = ["local"],
-    deps = ["@org_golang_x_sys//unix:go_default_library"],
+    deps = [
+        "//pkg/hvf/hvftest",
+        "@org_golang_x_sys//unix:go_default_library",
+    ],
 )
