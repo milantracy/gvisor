@@ -1,11 +1,22 @@
+load("//pkg/hvf/entitle:defs.bzl", "hvf_signed_binary")
 load("//tools:defs.bzl", "go_binary")
 
 package(default_applicable_licenses = ["//:license"])
 
 licenses(["notice"])
 
-go_binary(
+# hvfboot is hvfboot_unsigned, ad-hoc signed with the hypervisor entitlement.
+hvf_signed_binary(
     name = "hvfboot",
+    binary = ":hvfboot_unsigned",
+    target_compatible_with = [
+        "@platforms//os:macos",
+        "@platforms//cpu:aarch64",
+    ],
+)
+
+go_binary(
+    name = "hvfboot_unsigned",
     srcs = ["main.go"],
     target_compatible_with = [
         "@platforms//os:macos",
@@ -17,6 +28,7 @@ go_binary(
         "//pkg/cpuid",
         "//pkg/fd",
         "//pkg/fspath",
+        "//pkg/hvf",
         "//pkg/hvf/entitle",
         "//pkg/log",
         "//pkg/memutil",

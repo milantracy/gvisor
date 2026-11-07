@@ -20,11 +20,15 @@
 // The image must have blocks of at least 16 KiB and no inline file data
 // (mkfs.erofs -b 16384 -E noinline_data); make_image.sh makes one from a
 // container image. The root filesystem is read-only; /proc, /dev and a tmpfs
-// /tmp are mounted on it. The binary signs a copy of itself with the
-// hypervisor entitlement and runs it.
+// /tmp are mounted on it.
+//
+// The //runsc/hvfboot:hvfboot target is signed with the hypervisor
+// entitlement at build time. A binary without the entitlement signs a copy of
+// itself and runs that copy.
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -37,6 +41,7 @@ import (
 	"gvisor.dev/gvisor/pkg/cpuid"
 	"gvisor.dev/gvisor/pkg/fd"
 	"gvisor.dev/gvisor/pkg/fspath"
+	hvfapi "gvisor.dev/gvisor/pkg/hvf"
 	"gvisor.dev/gvisor/pkg/hvf/entitle"
 	"gvisor.dev/gvisor/pkg/log"
 	"gvisor.dev/gvisor/pkg/memutil"
@@ -95,13 +100,20 @@ func main() {
 		fmt.Fprintf(os.Stderr, "usage: hvfboot -image <root.erofs> <program> [args...]\n")
 		os.Exit(2)
 	}
-	if os.Getenv(entitle.SignedEnv) == "" {
+	cpuid.Initialize()
+	plat, err := hvf.New()
+	if errors.Is(err, hvfapi.ErrDenied) && os.Getenv(entitle.SignedEnv) == "" {
+		// The binary does not have the hypervisor entitlement.
 		code, err := entitle.Reexec()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "hvfboot: %v\n", err)
 			os.Exit(1)
 		}
 		os.Exit(code)
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "hvfboot: creating the hvf platform: %v\n", err)
+		os.Exit(1)
 	}
 	if *debug || *straceFlag {
 		log.SetLevel(log.Debug)
@@ -110,7 +122,7 @@ func main() {
 		strace.Initialize()
 		strace.EnableAll(strace.SinkTypeLog)
 	}
-	code, err := run(*image, flag.Args())
+	code, err := run(plat, *image, flag.Args())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hvfboot: %v\n", err)
 		os.Exit(1)
@@ -118,14 +130,9 @@ func main() {
 	os.Exit(code)
 }
 
-func run(imagePath string, argv []string) (int, error) {
-	cpuid.Initialize()
+func run(plat *hvf.HVF, imagePath string, argv []string) (int, error) {
 	if err := usage.Init(); err != nil {
 		return 0, fmt.Errorf("setting up memory accounting: %w", err)
-	}
-	plat, err := hvf.New()
-	if err != nil {
-		return 0, fmt.Errorf("creating the hvf platform: %w", err)
 	}
 	k := &kernel.Kernel{Platform: plat}
 
