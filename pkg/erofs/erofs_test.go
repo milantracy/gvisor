@@ -53,18 +53,20 @@ func TestOnDiskStructureSizes(t *testing.T) {
 // block) is accepted, not rejected with EUCLEAN. erofs-utils >= 1.9 emits this
 // layout and the Linux kernel reads it.
 func TestInlineInodeStraddlingBlockBoundary(t *testing.T) {
-	const (
-		blockSize = 4096
-		nid       = 127  // off = nid<<InodeSlotBits = 4064: 32 bytes before block end
-		size      = 4050 // tail 4050 > blockSize-InodeExtendedSize (4032), but valid
+	const blockSize = hostarch.PageSize
+	var (
+		// off = nid<<InodeSlotBits is 32 bytes before the block end.
+		nid = uint64(blockSize-32) >> InodeSlotBits
+		// The tail is longer than blockSize-InodeExtendedSize, but valid.
+		size = uint64(blockSize - InodeExtendedSize + 18)
 	)
 
 	img := make([]byte, 3*blockSize)
 
 	sb := SuperBlock{
 		Magic:         SuperBlockMagicV1,
-		BlockSizeBits: 12, // 4096
-		RootNid:       nid,
+		BlockSizeBits: hostarch.PageShift,
+		RootNid:       uint16(nid),
 		Blocks:        3,
 	}
 	sb.MarshalUnsafe(img[SuperBlockOffset:])
