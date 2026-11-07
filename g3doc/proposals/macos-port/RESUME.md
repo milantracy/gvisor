@@ -61,10 +61,10 @@ and the design doc on google/gvisor#1270. The A/B decision is (B).
 
 The darwin build is in progress on `macos-port/darwin-shims` (`darwin-build.md`
 has the host setup and the list of failing packages). Native Bazel works on the
-Mac. The first layer of leaf packages is done (see the progress table in
-`darwin-build.md`). Next: the second layer (`hostmm`, `fdnotifier` and
-`socket/unix/transport`, `lisafs`, `stateio`). `safecopy` has a darwin signal
-handler, so package tests run on darwin.
+Mac. The first and second layers are done (see the progress table in
+`darwin-build.md`); package tests run on darwin, and flipcall uses
+`os_sync_wait_on_address`. Next: the third layer, `pgalloc` (decommit with
+`F_PUNCHHOLE`, registry requirement 7) and `fsimpl/eventfd`.
 
 ## Phase 0 probe plan (done)
 

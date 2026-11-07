@@ -107,10 +107,17 @@ linux/arm64 cross-build whose tests run in a `debian:trixie` container.
 | `//pkg/unet` | ok | pass (4 skipped) | pass | Per-OS socket creation, `poll`, `SO_NOSIGPIPE`; no `SOCK_SEQPACKET` on darwin |
 | `//pkg/fsutil` | ok | no tests | builds | darwin directory listing; gofer-only wrappers stay Linux-only |
 | `//pkg/memutil` | ok | no tests | builds | `CreateMemFD` is an unlinked APFS temp file on darwin |
-| `//pkg/flipcall` | ok | Linux-only test | pass | Peer wait and wake return `ENOSYS` on darwin until `os_sync_wait_on_address` is bound |
+| `//pkg/flipcall` | ok | pass | pass | `os_sync_wait_on_address` and `os_sync_wake_by_address_*` (shared) on darwin; no file seals |
 | `//pkg/sentry/usage` | ok | no tests | builds | Fixed by `memutil` |
 | `//pkg/sighandling` | ok | no tests | builds | libSystem `sigaction` through a cgo-free trampoline |
 | `//pkg/safecopy` | ok | pass | pass | darwin arm64 signal handler |
+| `//pkg/sentry/hostmm` | ok | no tests | builds | `membarrier` returns `ENOSYS` on darwin |
+| `//pkg/sentry/state/stateio` | ok | pass | builds | No `O_DIRECT` on darwin |
+| `//pkg/fdnotifier` | ok | pass | builds | kqueue with `EV_CLEAR` on darwin |
+| `//pkg/errors/linuxerr`, `//pkg/syserr` | ok | pass | pass | Host errno to Linux errno table on darwin; see below |
+| `//pkg/sentry/socket/unix/transport` | ok | pass | pass | Family from `getsockname`; `SO_NOSIGPIPE`; no `SO_PASSCRED` |
+| `//pkg/lisafs` | ok | pass | pass | Linux ABI values on the wire; kqueue hangup watchdog on darwin |
+| `//tools/bazeldefs:tags.bzl` | | | | `_darwin` file suffix; see below |
 
 ### Second pass over the demo path (2026-11-06)
 
@@ -144,30 +151,44 @@ These differ from Linux and matter beyond the build:
 -   **`sendmsg` and `recvmsg` need at least one iovec** (`EMSGSIZE`
     otherwise), and `recvmsg` returns 0 at once if the iovecs have no space.
 -   **`sun_path` is 104 bytes** (108 on Linux).
+-   **errno values differ.** Only the classic errnos up to `ERANGE` (34)
+    have the Linux value; for example `EAGAIN` is 35, which is `EDEADLK` on
+    Linux. The rule in the port: `unix.Errno` holds host values,
+    `errno.Errno` and `*errors.Error` hold Linux values, and
+    `linuxerr.HostToLinux` and `linuxerr.LinuxToHost` convert between them.
+    On Linux both are the identity. A darwin errno with no Linux equivalent
+    (such as `EAUTH`) becomes `EIO`. Still to do: `task_syscall.go` returns a
+    `unix.Errno` to the application as a Linux errno.
+-   **Open and `*at` flags differ.** `O_TRUNC` is `0x400` (Linux `0x200`)
+    and `AT_REMOVEDIR` is `0x80` (Linux `0x200`). lisafs carries Linux
+    values; a darwin gofer must convert them before it calls the host.
+-   **`poll` with only `POLLHUP` does not report a shutdown while the socket
+    has unread data.** With no unread data it does, for a local or peer
+    shutdown, and pending data does not wake it. A kqueue `EVFILT_READ`
+    filter with `EV_CLEAR` and `NOTE_LOWAT` above the buffer size reports
+    `EV_EOF` in all cases.
+-   **No file seals.** The flipcall packet window cannot get
+    `F_SEAL_SHRINK`, so a peer that truncates it causes SIGBUS in the other
+    party.
 -   Tests print "host page size mismatch - running on non-4K host", because
     `hostarch` uses the 4K variant on a 16K host.
 
-### Second pass over the demo path (2026-11-06)
+### Build rules
 
-With the packages above fixed, the same 12 targets still build 1 of 12. The
-next failures:
+`tools/bazeldefs/tags.bzl` lists the file suffixes that split a package into
+sets for `go_marshal` and `go_stateify`. Without `_darwin` in the list, a
+`foo_darwin.go` file was in the default set, its `//go:build darwin`
+constraint went to the generated file, and the package lost its generated
+methods on Linux. nogo found this, because it type-checks each package for
+linux/amd64 and linux/arm64 too. Run the `_nogo` targets on darwin after each
+change.
+
+### Third pass over the demo path (2026-11-07)
 
 | Package | First errors |
 |---|---|
-| `//pkg/sentry/hostmm` | `SYS_MEMBARRIER` |
-| `//pkg/sentry/socket/unix/transport` | `pkg/fdnotifier` has no darwin files (epoll); `SO_DOMAIN`, `SO_PASSCRED` |
-| `//pkg/lisafs` | `STATX_*`, `POLLRDHUP`, `Ppoll`, `EREMOTEIO` |
-| `//pkg/sentry/state/stateio` | `O_DIRECT` |
-
-Found on the way:
-
--   `//pkg/safecopy` builds on darwin, but its `init` panics: darwin
-    `sighandling.ReplaceSignalHandler` returns "not supported". Every binary
-    that imports `safemem` or `safecopy` fails at startup. This needs a
-    SIGSEGV/SIGBUS handler for the darwin arm64 signal frame; it is a port,
-    not a leaf fix.
--   Tests print "host page size mismatch - running on non-4K host", because
-    `hostarch` uses the 4K variant on a 16K host.
+| `//pkg/sentry/pgalloc` | `unix.Fallocate`, `FALLOC_FL_PUNCH_HOLE`, `MADV_HUGEPAGE`, `MADV_NOHUGEPAGE`, `MADV_POPULATE_WRITE` |
+| `//pkg/sentry/fsimpl/eventfd` | `unix.Eventfd` |
 
 ## vDSO
 
