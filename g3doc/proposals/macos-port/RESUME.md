@@ -73,8 +73,12 @@ an HVC round trip costs about 720 ns from Go (2026-11-07). The
 parameter page. The IPA registry
 (`pkg/sentry/platform/hvf/ipa`) and the `memutil.MappingObserver` hooks in
 `pgalloc`, `fsutil` and `erofs` are done. The `hvf` platform runs hand-written EL0 code
-through `Context.Switch` (checkpoint 2, 2026-11-07). Next: the darwin
-launcher, then a busybox EROFS image with 16 KiB blocks.
+through `Context.Switch` (checkpoint 2, 2026-11-07). `runsc/hvfboot` runs
+Debian's static busybox from an EROFS image with 16 KiB blocks: `echo
+hello`, `dmesg`, and `sh -c` with fork, exec, pipes and exit statuses
+(checkpoints 3 and 4, the Phase 1 exit criterion, 2026-11-07). Next:
+system call cost (13.7 µs through `Switch`), ID register emulation, host
+TTYs, and splitting the branch into PRs.
 
 ## Phase 0 probe plan (done)
 

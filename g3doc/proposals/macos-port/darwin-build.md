@@ -373,6 +373,41 @@ root page table of a released address space is not freed; freed page
 tables can be recycled while another address space's shootdown is in
 progress; one channel hand-off per switch.
 
+## `hvfboot`
+
+`//runsc/hvfboot` is a launcher for the Phase 1 demo, not `runsc`. It boots
+a Sentry on the `hvf` platform, mounts an EROFS image as the root
+filesystem, imports its own standard I/O, and runs one program. It signs a
+copy of itself with the hypervisor entitlement (`//pkg/hvf/entitle`) and
+runs that copy; no developer account is needed.
+
+```
+runsc/hvfboot/make_busybox_image.sh busybox.erofs   # needs Docker
+bazelisk build //runsc/hvfboot
+bazel-bin/runsc/hvfboot/hvfboot_/hvfboot -image busybox.erofs /bin/busybox echo hello
+```
+
+The image needs blocks of at least the page size (16 KiB) and no inline
+file data (`mkfs.erofs -b 16384 -E noinline_data`), because the Sentry maps
+file data directly from the image. Debian's `mkfs.erofs` allows blocks only
+up to 4 KiB, so the script builds erofs-utils 1.8.6 with a larger
+`MAX_BLOCK_SIZE`. `-strace` logs system calls; `-debug` logs at debug level.
+
+Other changes for the launcher:
+
+-   `sentry/time` reads host clocks with `clock_gettime(2)` on darwin; the
+    vDSO-symbol implementation is Linux-only.
+-   `strace` sets `seccomp.SyscallName` only on Linux.
+-   `linuxerr.HostToLinux` on darwin inverts the full Linux errno range up to
+    `MAX_ERRNO`. Before, the restart errnos (512-516) became `EIO`, so an
+    interrupted system call was neither restarted nor converted to `EINTR`
+    (busybox `sh` reported status 255 for every child).
+
+Checkpoints 3 and 4 (2026-11-07): `echo hello`, `dmesg`, `uname -a`, `ls`,
+and `sh -c '/bin/uname -m | /bin/cat; echo st=$?'` give the correct output
+and exit status. 20 runs of the pipeline pass, at about 0.37 s each,
+including the re-exec and signing.
+
 ## vDSO
 
 The vDSO is a `-nostdlib` Linux ELF, built for both arm64 and amd64 by a
