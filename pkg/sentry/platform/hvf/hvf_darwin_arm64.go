@@ -59,8 +59,11 @@ type HVF struct {
 	// vcpus is the pool. It does not change after New.
 	vcpus []*vcpu
 
-	// work is where Switch sends work to the pool.
-	work chan *switchRequest
+	// freeSeq changes each time a vCPU becomes free. claimWaiters is the
+	// number of Switches that wait for a free vCPU. Both are accessed
+	// atomically.
+	freeSeq      uint32
+	claimWaiters int32
 }
 
 var (
@@ -87,7 +90,6 @@ func newHVF() (*HVF, error) {
 	}
 	p := &HVF{
 		registry: ipa.New(mapper{}, ipaStart, 1<<ipaBits, hostarch.PageSize, hostarch.HugePageSize),
-		work:     make(chan *switchRequest),
 	}
 	memutil.SetMappingObserver(p.registry)
 	p.ptMem = newPTMemory(p.registry)
@@ -162,7 +164,6 @@ func (p *HVF) NewAddressSpace(platform.AddressSpaceOptions) (platform.AddressSpa
 func (p *HVF) NewContext(pkgcontext.Context) platform.Context {
 	c := &context{p: p}
 	c.interrupt.Dst = c
-	c.req.done = make(chan struct{}, 1)
 	return c
 }
 

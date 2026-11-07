@@ -40,6 +40,14 @@ type vcpu struct {
 	// runs is incremented each time hv_vcpu_run returns.
 	runs atomicbitops.Uint64
 
+	// busy is 1 from when a Switch claims the vCPU until the vCPU thread
+	// releases it. mbox is 1 while req has a request that the vCPU thread
+	// has not taken. sleeping is 1 while the vCPU thread blocks on mbox.
+	// They are accessed atomically.
+	busy, mbox, sleeping uint32
+	// req is the request in mbox.
+	req *switchRequest
+
 	// The following fields are used only by the pool thread.
 
 	// ttbr0 is the value of TTBR0_EL1.
@@ -63,13 +71,17 @@ func (v *vcpu) loop(errs chan<- error) {
 	if err != nil {
 		return
 	}
-	for r := range v.p.work {
+	for {
+		r := v.next()
 		r.c.running.Store(v)
 		v.curAS.Store(r.as)
 		r.at, r.err = v.switchTo(r.c, r.as, r.ac)
 		v.curAS.Store(nil)
 		r.c.running.Store(nil)
-		r.done <- struct{}{}
+		// Free the vCPU first, so that the next Switch of the same task
+		// can take it again.
+		v.p.release(v)
+		r.complete()
 	}
 }
 

@@ -37,8 +37,9 @@ type switchRequest struct {
 	at  hostarch.AccessType
 	err error
 
-	// done receives a value when the request is done.
-	done chan struct{}
+	// done is 1 when the request is done. sleeping is 1 while the waiter
+	// blocks on done. They are accessed atomically.
+	done, sleeping uint32
 }
 
 // context is a platform.Context.
@@ -61,6 +62,9 @@ type context struct {
 	info linux.SignalInfo
 
 	req switchRequest
+
+	// last is the vCPU of the last Switch.
+	last *vcpu
 }
 
 // Switch implements platform.Context.Switch.
@@ -71,8 +75,11 @@ func (c *context) Switch(ctx pkgcontext.Context, mm platform.MemoryManager, ac *
 		return nil, hostarch.NoAccess, platform.ErrContextInterrupt
 	}
 	c.req.c, c.req.as, c.req.ac = c, as, ac
-	c.p.work <- &c.req
-	<-c.req.done
+	atomic.StoreUint32(&c.req.done, 0)
+	v := c.p.claim(c.last)
+	c.last = v
+	v.post(&c.req)
+	c.req.wait()
 	c.interrupt.Disable()
 	c.req.as, c.req.ac = nil, nil
 	return &c.info, c.req.at, c.req.err
