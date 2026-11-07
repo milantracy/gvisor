@@ -113,8 +113,11 @@ gofer process serves all host mounts, and Seatbelt profiles replace the
 host files through it ("Host mounts" in `darwin-build.md`). The gofer maps
 the sandbox root to the user, as the user namespace of rootless `runsc`
 does. A Seatbelt profile confines the gofer to its mount sources and a
-private `TMPDIR`, and denies exec and network (`//pkg/seatbelt`). Next: the
-Sentry's Seatbelt profile, then networking. Lazy FP state
+private `TMPDIR`, and denies exec and network (`//pkg/seatbelt`). The
+Sentry opens its host resources, then applies a Seatbelt profile that denies
+all file access, exec, network and IPC, in place of the `pivot_root` of
+`runsc`; it allows only `fstat` of its standard I/O files and of files under
+the mount sources. Next: networking. Lazy FP state
 and EL0 ID-register `MRS` emulation (low priority: the KVM platform does not
 emulate it either) are deferred.
 

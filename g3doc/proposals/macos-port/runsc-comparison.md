@@ -42,8 +42,8 @@ Status values:
 
 | Layer | runsc on Linux | macOS port | Status |
 |---|---|---|---|
-| File system view | New mount namespace; `pivot_root` into a read-only tmpfs with `/etc/localtime` and a minimal procfs (`runsc/cmd/sentry/sentrycmd/chroot.go`, `setUpChroot`). The Sentry keeps only FDs that it opened before | No mount namespace, `pivot_root` or bind mounts; `chroot(2)` needs root. A Seatbelt (`sandbox_init`) profile denies all file access; the Sentry opens the EROFS image, gofer sockets and `/etc/localtime` first, and those FDs keep working | Planned (step 3) |
-| System call filter | seccomp-bpf (`runsc/boot/filter`, installed in `loader.go`) | No seccomp. The Seatbelt profile denies process exec, network and IPC; it filters by operation and path, not by system call | Planned (step 3) |
+| File system view | New mount namespace; `pivot_root` into a read-only tmpfs with `/etc/localtime` and a minimal procfs (`runsc/cmd/sentry/sentrycmd/chroot.go`, `setUpChroot`). The Sentry keeps only FDs that it opened before | No mount namespace, `pivot_root` or bind mounts; `chroot(2)` needs root. A Seatbelt (`sandbox_init`) profile denies all file access; the Sentry opens the EROFS image, gofer sockets and `/etc/localtime` first, and those FDs keep working. The profile allows only `fstat` (`file-read-metadata`) of the standard I/O files and under the mount sources, because Seatbelt checks `fstat` of FDs that are not open for reading | Done |
+| System call filter | seccomp-bpf (`runsc/boot/filter`, installed in `loader.go`) | No seccomp. The Seatbelt profile denies process exec, network and IPC; it filters by operation and path, not by system call | Done |
 | Namespaces | New IPC, mount, UTS, PID and (if asked) network and user namespaces (`sandbox.go`, the `nss` list) | No namespaces on macOS. Seatbelt covers file, network, IPC and exec access | No equivalent |
 | User | Optional user namespace with UID/GID mappings; can run as nobody | Runs as the calling user. A separate user needs root to set up | Later |
 | Sandbox IDs on host files | Rootless: the user namespace maps sandbox root to the user; other IDs are unmapped | The darwin gofer does the same mapping itself (`MapRootToEffectiveIDs`): 0 is the user, other host IDs are 65534, `chown` to other IDs fails | Done |
@@ -90,6 +90,6 @@ Status values:
     one socket pair per mount in mount order, `realpath` of mount sources,
     FD limit.
 2.  Done: Seatbelt profile for the gofer (`//pkg/seatbelt`).
-3.  Seatbelt profile for the Sentry, in place of `pivot_root`.
+3.  Done: Seatbelt profile for the Sentry, in place of `pivot_root`.
 
 None of these steps needs root.

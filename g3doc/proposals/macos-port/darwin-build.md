@@ -643,8 +643,63 @@ mount test passes under the profile. `python3 -c pass` with one mount takes
 Seatbelt denials are not in `log show` without more logging setup; the
 tests check the result codes instead.
 
-Next: a Seatbelt profile for the Sentry. `runsc-comparison.md` compares
-each layer with `runsc`.
+### Confinement of the Sentry
+
+`runsc` confines the Sentry with `pivot_root` into an empty read-only tmpfs
+in a new mount namespace (`setUpChroot`), namespaces and seccomp. darwin has
+no mount namespaces, and `chroot(2)` needs root. `hvfboot` does this:
+
+1.  Open all host resources: the EROFS image, the memory file, the gofer
+    socket pairs (it starts the gofer here), and standard I/O (the import
+    checks the host FDs).
+2.  Apply the Seatbelt profile.
+3.  Mount the image and the host mounts, and load the program. The Sentry
+    parses untrusted data only when it is confined.
+
+```
+(version 1)
+(deny default)
+(allow file-read-metadata (literal "<path of a standard I/O file>"))
+(allow file-read-metadata (subpath "<mount source>"))
+```
+
+Hypervisor.framework needs no rule, also for vCPUs that the Sentry creates
+after the profile. FDs that the Sentry opened before keep working for reads
+and writes.
+
+Seatbelt checks `fstat` of an FD that is not open for reading as a
+`file-read-metadata` of its path. FDs open for reading are not checked. Two
+cases need `fstat` of a write-only FD:
+
+-   A standard output redirected to a file. The host file system `fstat`s it
+    for the size before each `O_APPEND` write (`>>`, and the output file of
+    the Claude Code shell), and the program can `fstat` it.
+-   A write-only host FD that the gofer gives for a file under a mount.
+
+So the profile allows `file-read-metadata`, and nothing more, for the paths
+of the standard I/O files (`seatbelt.FDPath`, `fcntl(F_GETPATH)`, before the
+profile) and under the mount sources, which the gofer serves to the Sentry
+already. If a standard I/O file is renamed, `fstat` of it fails.
+
+Result (2026-11-07):
+
+-   `//runsc/hvfboot:confine_test` runs a child whose standard output is a
+    write-only `O_APPEND` file. Allowed: reads and writes on FDs opened
+    before, `fstat` of the standard output, `socketpair`. Denied: opening
+    any file, `fstat` of another write-only FD, listing `/`, exec, TCP
+    connect.
+-   The Python smoke test passes 14 of 14 checks; the host mount tests
+    pass, including `O_APPEND` writes and `fstat` of write-only FDs.
+-   40 runs each of `python3 -c pass`, with and without a host mount,
+    complete with no process or `TMPDIR` left.
+-   `python3 -c pass` takes 27 ms (22 ms without the profile); with one
+    host mount, 37 ms (36 ms).
+
+`hvfboot` does not wait for the gofer at exit. The gofer exits when its
+connections close, at the latest when the Sentry exits. A gofer that is
+killed (`SIGKILL`) leaves its empty `TMPDIR`.
+
+Next: networking. `runsc-comparison.md` compares each layer with `runsc`.
 
 ## vDSO
 
