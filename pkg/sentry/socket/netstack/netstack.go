@@ -34,7 +34,6 @@ import (
 	"strconv"
 	"time"
 
-	"golang.org/x/sys/unix"
 	"google.golang.org/protobuf/proto"
 	"gvisor.dev/gvisor/pkg/abi/linux"
 	"gvisor.dev/gvisor/pkg/abi/linux/errno"
@@ -848,7 +847,7 @@ func (s *sock) Connect(t *kernel.Task, sockaddr []byte, blocking bool) *syserr.E
 	switch err := s.Endpoint.Connect(addr); err.(type) {
 	case *tcpip.ErrConnectStarted, *tcpip.ErrAlreadyConnecting:
 	case *tcpip.ErrNoPortAvailable:
-		if (s.family == unix.AF_INET || s.family == unix.AF_INET6) && s.skType == linux.SOCK_STREAM {
+		if (s.family == linux.AF_INET || s.family == linux.AF_INET6) && s.skType == linux.SOCK_STREAM {
 			// TCP unlike UDP returns EADDRNOTAVAIL when it can't
 			// find an available local ephemeral port.
 			return syserr.ErrAddressNotAvailable
@@ -1029,7 +1028,7 @@ func GetSockOptSocket(t *kernel.Task, s socket.Socket, ep commonEndpoint, family
 		return &optP, nil
 
 	case linux.SO_PEERCRED:
-		if family != linux.AF_UNIX || outLen < unix.SizeofUcred {
+		if family != linux.AF_UNIX || outLen < linux.SizeOfControlMessageCredentials {
 			return nil, syserr.ErrInvalidArgument
 		}
 		return s.GetPeerCreds(t)
@@ -1961,7 +1960,7 @@ func incrementBadSetSocketOptionMetric(t *kernel.Task, fieldValue *metric.FieldV
 	} else {
 		unknownSetSocketOptionMetric.Increment(&socketLevelSocketFieldValue)
 	}
-	t.Kernel().EmitUnimplementedEvent(t, unix.SYS_SETSOCKOPT)
+	t.Kernel().EmitUnimplementedEvent(t, sysSetSockOpt)
 }
 
 // SetSockOptSocket handles linux setsockopt(2) when level is SOL_SOCKET.

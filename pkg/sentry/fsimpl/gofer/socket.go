@@ -30,7 +30,7 @@ func (i *inode) isSocket() bool {
 
 func isSocketTypeSupported(sockType linux.SockType) bool {
 	switch sockType {
-	case unix.SOCK_STREAM, unix.SOCK_DGRAM, unix.SOCK_SEQPACKET:
+	case linux.SOCK_STREAM, linux.SOCK_DGRAM, linux.SOCK_SEQPACKET:
 		return true
 	default:
 		return false
