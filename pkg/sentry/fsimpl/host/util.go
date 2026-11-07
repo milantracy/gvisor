@@ -24,17 +24,13 @@ func toTimespec(ts linux.StatxTimestamp, omit bool) unix.Timespec {
 	if omit {
 		return unix.Timespec{
 			Sec:  0,
-			Nsec: unix.UTIME_OMIT,
+			Nsec: utimeOmit,
 		}
 	}
 	return unix.Timespec{
 		Sec:  ts.Sec,
 		Nsec: int64(ts.Nsec),
 	}
-}
-
-func unixToLinuxStatxTimestamp(ts unix.StatxTimestamp) linux.StatxTimestamp {
-	return linux.StatxTimestamp{Sec: ts.Sec, Nsec: ts.Nsec}
 }
 
 func timespecToStatxTimestamp(ts unix.Timespec) linux.StatxTimestamp {

@@ -18,12 +18,11 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/unix"
-	"gvisor.dev/gvisor/pkg/abi/linux"
 )
 
 func ioctlFionread(fd int) (uint32, error) {
 	var v uint32
-	if _, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), linux.FIONREAD, uintptr(unsafe.Pointer(&v))); errno != 0 {
+	if _, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), hostFIONREAD, uintptr(unsafe.Pointer(&v))); errno != 0 {
 		return 0, errno
 	}
 	return v, nil
