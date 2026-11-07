@@ -23,7 +23,8 @@ const (
 	// arm64 support 4K/16K/64K page size,
 	// which can be get by unix.Getpagesize().
 	// Currently, only 4K page size is supported by default,
-	// or 64K pages by using the pagesize_64k build tag.
+	// 16K pages by using the pagesize_16k build tag, or 64K pages by using the
+	// pagesize_64k build tag.
 	PageSize = 1 << PageShift
 
 	// HugePageSize is the system huge page size.

@@ -96,11 +96,17 @@ string_flag(
     build_setting_default = "4k",
     values = [
         "4k",
+        "16k",
         "64k",
     ],
 )
 
 # Page size configurations for ARM64
+config_setting(
+    name = "pagesize_16k",
+    flag_values = {":page_size": "16k"},
+)
+
 config_setting(
     name = "pagesize_64k",
     flag_values = {":page_size": "64k"},
