@@ -21,6 +21,7 @@ import (
 	"golang.org/x/sys/unix"
 	"gvisor.dev/gvisor/pkg/hostarch"
 	"gvisor.dev/gvisor/pkg/log"
+	"gvisor.dev/gvisor/pkg/memutil"
 	"gvisor.dev/gvisor/pkg/safemem"
 	"gvisor.dev/gvisor/pkg/sentry/memmap"
 )
@@ -207,6 +208,7 @@ func (f *MmapPreciseFile) mapInternalSegment(fr *memmap.FileRange, seg mappingIt
 	addr := seg.Value().addr + uintptr(fr.Start-seg.Start())
 	if !seg.Value().writable && write {
 		seg = f.mappings.Isolate(seg, *fr)
+		memutil.WillReplace(addr, uintptr(seg.Range().Length()))
 		_, _, errno := unix.Syscall6(
 			unix.SYS_MMAP,
 			addr,
@@ -268,6 +270,7 @@ func (f *MmapPreciseFile) mapInternalGap(fr *memmap.FileRange, gap mappingGapIte
 
 // +checklocks:f.mapsMu
 func (f *MmapPreciseFile) unmapSegmentLocked(mseg mappingIterator) {
+	memutil.WillUnmap(mseg.Value().addr, uintptr(mseg.Range().Length()))
 	if _, _, errno := unix.Syscall(unix.SYS_MUNMAP, uintptr(mseg.Value().addr), uintptr(mseg.Range().Length()), 0); errno != 0 {
 		// This leaks address space and is unexpected, but is otherwise
 		// harmless, so complain but don't panic.

@@ -14,7 +14,11 @@
 
 package erofs
 
-import "unsafe"
+import (
+	"unsafe"
+
+	"gvisor.dev/gvisor/pkg/memutil"
+)
 
 // pointerAt returns a pointer to offset off within the memory backed by image.
 //
@@ -34,4 +38,12 @@ func (i *Image) pointerAt(off uint64) unsafe.Pointer {
 //   - d is not the last dirent in its block.
 func direntAfter(d *Dirent) *Dirent {
 	return (*Dirent)(unsafe.Pointer(uintptr(unsafe.Pointer(d)) + DirentSize))
+}
+
+// willUnmap tells the memutil.MappingObserver that the image mapping will be
+// unmapped.
+func (i *Image) willUnmap() {
+	if len(i.bytes) != 0 {
+		memutil.WillUnmap(uintptr(unsafe.Pointer(&i.bytes[0])), uintptr(len(i.bytes)))
+	}
 }

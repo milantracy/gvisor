@@ -12,6 +12,7 @@ go_library(
         "memfd_linux_unsafe.go",
         "memutil_unsafe.go",
         "mmap.go",
+        "observer.go",
     ],
     importpath = "gvisor.dev/gvisor/pkg/memutil",
     visibility = ["//visibility:public"],

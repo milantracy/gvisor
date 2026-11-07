@@ -186,6 +186,7 @@ go_library(
         "//pkg/goid",
         "//pkg/hostarch",
         "//pkg/log",
+        "//pkg/memutil",
         "//pkg/ringdeque",
         "//pkg/safemem",
         "//pkg/sentry/arch",

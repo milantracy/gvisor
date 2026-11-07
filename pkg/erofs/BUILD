@@ -9,6 +9,8 @@ go_library(
     name = "erofs",
     srcs = [
         "erofs.go",
+        "erofs_darwin.go",
+        "erofs_linux.go",
         "erofs_unsafe.go",
     ],
     importpath = "gvisor.dev/gvisor/pkg/erofs",
@@ -22,6 +24,7 @@ go_library(
         "//pkg/hostarch",
         "//pkg/log",
         "//pkg/marshal",
+        "//pkg/memutil",
         "@org_golang_x_sys//unix:go_default_library",
     ],
 )
