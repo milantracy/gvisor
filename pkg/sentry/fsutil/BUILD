@@ -118,6 +118,8 @@ go_library(
         "frame_ref_set.go",
         "frame_ref_set_impl.go",
         "fsutil.go",
+        "fsutil_darwin.go",
+        "fsutil_linux.go",
         "mapping_set.go",
         "maps_mutex.go",
         "mmap_cached_file.go",
