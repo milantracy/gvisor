@@ -17,57 +17,12 @@ package eventfd
 
 import (
 	"fmt"
-	"io"
 
-	"golang.org/x/sys/unix"
 	"gvisor.dev/gvisor/pkg/hostarch"
-	"gvisor.dev/gvisor/pkg/rawfile"
 	"gvisor.dev/gvisor/pkg/safecopy"
 )
 
 const sizeofUint64 = 8
-
-// Eventfd represents a Linux eventfd object.
-type Eventfd struct {
-	fd       int
-	mmioAddr uintptr
-	mmioCtrl MMIOController
-}
-
-// Create returns an initialized eventfd.
-func Create() (Eventfd, error) {
-	fd, _, err := unix.RawSyscall(unix.SYS_EVENTFD2, 0, 0, 0)
-	if err != 0 {
-		return Eventfd{}, fmt.Errorf("failed to create eventfd: %v", error(err))
-	}
-	if err := unix.SetNonblock(int(fd), true); err != nil {
-		unix.Close(int(fd))
-		return Eventfd{}, err
-	}
-	return Eventfd{fd: int(fd)}, nil
-}
-
-// Wrap returns an initialized Eventfd using the provided fd.
-func Wrap(fd int) Eventfd {
-	return Eventfd{fd: fd}
-}
-
-// Close closes the eventfd, after which it should not be used.
-func (ev Eventfd) Close() error {
-	if ev.mmioCtrl != nil {
-		ev.mmioCtrl.Close(ev)
-	}
-	return unix.Close(ev.fd)
-}
-
-// Dup copies the eventfd, calling dup(2) on the underlying file descriptor.
-func (ev Eventfd) Dup() (Eventfd, error) {
-	other, err := unix.Dup(ev.fd)
-	if err != nil {
-		return Eventfd{}, fmt.Errorf("failed to dup: %v", other)
-	}
-	return Eventfd{fd: other}, nil
-}
 
 // Notify alerts other users of the eventfd. Users can receive alerts by
 // calling Wait or Read.
@@ -85,16 +40,7 @@ func (ev Eventfd) Write(val uint64) error {
 		}
 		// Fall back to using a syscall.
 	}
-	for {
-		n, err := nonBlockingWrite(ev.fd, buf[:])
-		if err == unix.EINTR {
-			continue
-		}
-		if err != nil || n != sizeofUint64 {
-			panic(fmt.Sprintf("bad write to eventfd: got %d bytes, wanted %d with error %v", n, sizeofUint64, err))
-		}
-		return err
-	}
+	return ev.writeValue(buf[:])
 }
 
 // MMIOWrite is equivalent to Write, but returns an error if the write cannot be
@@ -117,23 +63,6 @@ func (ev Eventfd) MMIOWrite(val uint64) error {
 func (ev Eventfd) Wait() error {
 	_, err := ev.Read()
 	return err
-}
-
-// Read blocks until eventfd is non-zero (i.e. someone calls Notify or Write)
-// and returns the value read.
-func (ev Eventfd) Read() (uint64, error) {
-	var tmp [sizeofUint64]byte
-	n, errno := rawfile.BlockingRead(ev.fd, tmp[:])
-	if errno != 0 {
-		return 0, errno
-	}
-	if n == 0 {
-		return 0, io.EOF
-	}
-	if n != sizeofUint64 {
-		panic(fmt.Sprintf("short read from eventfd: got %d bytes, wanted %d", n, sizeofUint64))
-	}
-	return hostarch.ByteOrder.Uint64(tmp[:]), nil
 }
 
 // FD returns the underlying file descriptor. Use with care, as this breaks the
