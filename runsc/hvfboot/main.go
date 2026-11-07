@@ -28,6 +28,10 @@
 //
 //	hvfboot -image root.erofs -v $HOME/src:/mnt/src:ro /bin/ls /mnt/src
 //
+// -network=sandbox (the default) gives the sandbox netstack with outbound
+// TCP and UDP through a network proxy process (`hvfboot net`); -network=none
+// gives loopback only.
+//
 // The //runsc/hvfboot:hvfboot target is signed with the hypervisor
 // entitlement at build time. A binary without the entitlement signs a copy of
 // itself and runs that copy.
@@ -69,11 +73,14 @@ import (
 	"gvisor.dev/gvisor/pkg/sentry/loader"
 	"gvisor.dev/gvisor/pkg/sentry/pgalloc"
 	"gvisor.dev/gvisor/pkg/sentry/platform/hvf"
+	_ "gvisor.dev/gvisor/pkg/sentry/socket/netlink"       // Registers netlink sockets.
+	_ "gvisor.dev/gvisor/pkg/sentry/socket/netlink/route" // Registers NETLINK_ROUTE.
 	"gvisor.dev/gvisor/pkg/sentry/strace"
 	_ "gvisor.dev/gvisor/pkg/sentry/syscalls/linux" // Registers the Linux system call table.
 	"gvisor.dev/gvisor/pkg/sentry/time"
 	"gvisor.dev/gvisor/pkg/sentry/usage"
 	"gvisor.dev/gvisor/pkg/sentry/vfs"
+	"gvisor.dev/gvisor/pkg/tcpip/stack"
 )
 
 // envFlag is a repeatable KEY=VALUE flag.
@@ -149,11 +156,17 @@ var (
 	debug      = flag.Bool("debug", false, "log at debug level")
 	straceFlag = flag.Bool("strace", false, "log system calls (implies -debug)")
 	fdLimit    = flag.Int("fdlimit", -1, "limit on the number of host FDs of the gofer, or -1 for no limit")
+	network    = flag.String("network", "sandbox", "sandbox: netstack with a network proxy process (hvfboot net); none: loopback only")
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "gofer" {
-		os.Exit(goferMain(os.Args[2:]))
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "gofer":
+			os.Exit(goferMain(os.Args[2:]))
+		case "net":
+			os.Exit(netMain(os.Args[2:]))
+		}
 	}
 	flag.Var(&envv, "e", "set KEY=VALUE in the environment of the program (repeatable)")
 	flag.Var(&volumes, "v", "mount host:guest[:ro] (repeatable)")
@@ -161,6 +174,7 @@ func main() {
 	if *image == "" || flag.NArg() == 0 {
 		fmt.Fprintf(os.Stderr, "usage: hvfboot -image <root.erofs> [-v host:guest[:ro]]... <program> [args...]\n")
 		fmt.Fprintf(os.Stderr, "       hvfboot gofer -io-fds <fd,...> -mount <ro|rw>:<path>...\n")
+		fmt.Fprintf(os.Stderr, "       hvfboot net -link-fd <fd> -lifeline-fd <fd>\n")
 		os.Exit(2)
 	}
 	cpuid.Initialize()
@@ -220,17 +234,38 @@ func run(plat *hvf.HVF, imagePath string, argv []string) (int, error) {
 	tk.SetClocks(time.NewCalibratedClocks(false), params)
 
 	creds := auth.NewRootCredentials(auth.NewRootUserNamespace())
+	var link stack.LinkEndpoint
+	switch *network {
+	case "sandbox":
+		linkFile, err := startNetProxy(*debug)
+		if err != nil {
+			return 0, err
+		}
+		ep, err := newPacketLink(context.Background(), linkFile)
+		if err != nil {
+			return 0, fmt.Errorf("creating the packet link: %w", err)
+		}
+		link = ep
+	case "none":
+	default:
+		return 0, fmt.Errorf("-network=%q is not sandbox or none", *network)
+	}
+	netns, err := newRootNetworkNamespace(k, creds.UserNamespace, link)
+	if err != nil {
+		return 0, fmt.Errorf("creating the network namespace: %w", err)
+	}
 	if err := k.Init(kernel.InitKernelArgs{
-		ApplicationCores:  uint(runtime.NumCPU()),
-		FeatureSet:        cpuid.HostFeatureSet(),
-		Timekeeper:        tk,
-		RootUserNamespace: creds.UserNamespace,
-		Vdso:              vdso,
-		VdsoParams:        params,
-		RootUTSNamespace:  kernel.NewUTSNamespace("gvisor", "gvisor", creds.UserNamespace),
-		RootIPCNamespace:  kernel.NewIPCNamespace(creds.UserNamespace),
-		RootPIDNamespace:  kernel.NewRootPIDNamespace(creds.UserNamespace),
-		Cgroup2FSInit:     cgroup2fs.NewFilesystem,
+		ApplicationCores:     uint(runtime.NumCPU()),
+		FeatureSet:           cpuid.HostFeatureSet(),
+		Timekeeper:           tk,
+		RootUserNamespace:    creds.UserNamespace,
+		Vdso:                 vdso,
+		VdsoParams:           params,
+		RootUTSNamespace:     kernel.NewUTSNamespace("gvisor", "gvisor", creds.UserNamespace),
+		RootIPCNamespace:     kernel.NewIPCNamespace(creds.UserNamespace),
+		RootPIDNamespace:     kernel.NewRootPIDNamespace(creds.UserNamespace),
+		RootNetworkNamespace: netns,
+		Cgroup2FSInit:        cgroup2fs.NewFilesystem,
 	}); err != nil {
 		return 0, fmt.Errorf("initializing the kernel: %w", err)
 	}

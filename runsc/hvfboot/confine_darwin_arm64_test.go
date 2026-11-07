@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 	"gvisor.dev/gvisor/pkg/abi/linux"
@@ -33,6 +34,7 @@ import (
 const (
 	profileChildEnv = "HVFBOOT_PROFILE_TEST_CHILD"
 	sentryChildEnv  = "HVFBOOT_SENTRY_TEST_CHILD"
+	netChildEnv     = "HVFBOOT_NET_TEST_CHILD"
 )
 
 func TestMain(m *testing.M) {
@@ -41,6 +43,9 @@ func TestMain(m *testing.M) {
 	}
 	if path := os.Getenv(sentryChildEnv); path != "" {
 		os.Exit(sentryChild(path))
+	}
+	if dir := os.Getenv(netChildEnv); dir != "" {
+		os.Exit(netChild(dir))
 	}
 	os.Exit(m.Run())
 }
@@ -182,6 +187,73 @@ func TestSentryProfile(t *testing.T) {
 	if string(got) != want {
 		t.Errorf("child output:\n%s\nwant:\n%s", got, want)
 	}
+}
+
+// netChild listens on host loopback and a Unix socket in dir, confines
+// itself as the network proxy, and prints one "name: result" line per check.
+func netChild(dir string) int {
+	tcpL, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		fmt.Printf("listen: %v\n", err)
+		return 1
+	}
+	defer tcpL.Close()
+	unixL, err := net.Listen("unix", filepath.Join(dir, "sock"))
+	if err != nil {
+		fmt.Printf("listen: %v\n", err)
+		return 1
+	}
+	defer unixL.Close()
+	if err := seatbelt.Init(netProfile); err != nil {
+		fmt.Printf("init: %v\n", err)
+		return 1
+	}
+	dial := func(network, addr string) error {
+		c, err := net.DialTimeout(network, addr, 5*time.Second)
+		if err == nil {
+			c.Close()
+		}
+		return err
+	}
+	printCheck("connect tcp host loopback", dial("tcp", tcpL.Addr().String()))
+	printCheck("connect unix socket", dial("unix", filepath.Join(dir, "sock")))
+	// 192.0.2.0/24 is for documentation (RFC 5737). A UDP send needs no
+	// reply; ENETUNREACH means that the profile allowed it.
+	u, err := net.Dial("udp", "192.0.2.1:9")
+	if err == nil {
+		_, err = u.Write([]byte("x"))
+		u.Close()
+	}
+	if errors.Is(err, unix.ENETUNREACH) || errors.Is(err, unix.EHOSTUNREACH) {
+		err = nil
+	}
+	printCheck("send udp", err)
+	_, err = os.ReadFile("/etc/hosts")
+	printCheck("read /etc/hosts", err)
+	printCheck("write file", os.WriteFile(filepath.Join(dir, "f"), []byte("x"), 0644))
+	printCheck("exec", exec.Command("/bin/true").Run())
+	return 0
+}
+
+func TestNetProfile(t *testing.T) {
+	// Unix socket paths are short; t.TempDir may be too long.
+	dir, err := os.MkdirTemp("/tmp", "nettest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	dir, err = filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runChild(t, netChildEnv+"="+dir, []string{
+		"connect tcp host loopback: denied",
+		"connect unix socket: denied",
+		"send udp: ok",
+		"read /etc/hosts: denied",
+		"write file: denied",
+		"exec: denied",
+	})
 }
 
 func TestSentryProfileRules(t *testing.T) {
