@@ -26,6 +26,9 @@ common --enable_platform_specific_config
 # g3doc/proposals/macos-port/darwin-build.md for the host tools.
 build:macos --//vdso:darwin_host
 
+# macOS on Apple silicon uses 16K pages.
+build:macos --//tools/bazeldefs:page_size=16k
+
 # Build with C++17.
 # com_google_protobuf is compiled with a few warnings.
 build --cxxopt=-std=c++17 --cxxopt=-Wno-error=maybe-uninitialized

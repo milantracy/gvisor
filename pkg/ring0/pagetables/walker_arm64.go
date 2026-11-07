@@ -65,7 +65,7 @@ func (w *Walker) iterateRangeCanonical(start, end uintptr) bool {
 				// entire region at least as large as a single
 				// PUD entry?  If so, we can skip allocating a
 				// new page for the pmd.
-				if start&(pudSize-1) == 0 && end-start >= pudSize {
+				if pudSect && start&(pudSize-1) == 0 && end-start >= pudSize {
 					pudEntry.SetSect()
 					if !w.visitor.visit(uintptr(start), pudEntry, pudSize-1) {
 						return false

@@ -59,11 +59,11 @@ func TestSerialEntries(t *testing.T) {
 
 	// Map two sequential entries.
 	pt.Map(0x400000, pteSize, MapOpts{AccessType: hostarch.ReadWrite}, pteSize*42)
-	pt.Map(0x401000, pteSize, MapOpts{AccessType: hostarch.ReadWrite}, pteSize*47)
+	pt.Map(0x400000 + pteSize, pteSize, MapOpts{AccessType: hostarch.ReadWrite}, pteSize*47)
 
 	checkMappings(t, pt, []mapping{
 		{0x400000, pteSize, pteSize * 42, MapOpts{AccessType: hostarch.ReadWrite}},
-		{0x401000, pteSize, pteSize * 47, MapOpts{AccessType: hostarch.ReadWrite}},
+		{0x400000 + pteSize, pteSize, pteSize * 47, MapOpts{AccessType: hostarch.ReadWrite}},
 	})
 }
 
@@ -71,10 +71,10 @@ func TestSpanningEntries(t *testing.T) {
 	pt := New(NewRuntimeAllocator())
 
 	// Span a pgd with two pages.
-	pt.Map(0x00007efffffff000, 2*pteSize, MapOpts{AccessType: hostarch.Read}, pteSize*42)
+	pt.Map(0x00007f0000000000 - pteSize, 2*pteSize, MapOpts{AccessType: hostarch.Read}, pteSize*42)
 
 	checkMappings(t, pt, []mapping{
-		{0x00007efffffff000, pteSize, pteSize * 42, MapOpts{AccessType: hostarch.Read}},
+		{0x00007f0000000000 - pteSize, pteSize, pteSize * 42, MapOpts{AccessType: hostarch.Read}},
 		{0x00007f0000000000, pteSize, pteSize * 43, MapOpts{AccessType: hostarch.Read}},
 	})
 }

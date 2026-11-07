@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build arm64 && !pagesize_64k
+//go:build arm64 && !pagesize_64k && !pagesize_16k
 
 package pagetables
 
@@ -34,6 +34,9 @@ const (
 	pgdSize = 1 << pgdShift
 
 	entriesPerPage = 512
+
+	// pudSect is true if PUD entries can be blocks.
+	pudSect = true
 )
 
 // PTEs is a collection of entries.

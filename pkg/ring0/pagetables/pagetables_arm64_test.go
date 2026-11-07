@@ -48,10 +48,18 @@ func Test1GAnd4K(t *testing.T) {
 	pt.Map(0x400000, pteSize, MapOpts{AccessType: hostarch.ReadWrite, User: true}, pteSize*42)
 	pt.Map(0x0000ff0000000000, pudSize, MapOpts{AccessType: hostarch.Read, User: true}, pudSize*47)
 
-	checkMappings(t, pt, []mapping{
+	want := []mapping{
 		{0x400000, pteSize, pteSize * 42, MapOpts{AccessType: hostarch.ReadWrite, User: true}},
-		{0x0000ff0000000000, pudSize, pudSize * 47, MapOpts{AccessType: hostarch.Read, User: true}},
-	})
+	}
+	if pudSect {
+		want = append(want, mapping{0x0000ff0000000000, pudSize, pudSize * 47, MapOpts{AccessType: hostarch.Read, User: true}})
+	} else {
+		// The super page is a series of huge pages.
+		for off := uintptr(0); off < pudSize; off += pmdSize {
+			want = append(want, mapping{0x0000ff0000000000 + off, pmdSize, pudSize*47 + off, MapOpts{AccessType: hostarch.Read, User: true}})
+		}
+	}
+	checkMappings(t, pt, want)
 }
 
 func TestSplit1GPage(t *testing.T) {
