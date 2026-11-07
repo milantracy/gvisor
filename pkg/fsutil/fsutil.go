@@ -16,34 +16,14 @@
 // sentry and other sandbox components.
 package fsutil
 
-import "golang.org/x/sys/unix"
-
 // SelfFilestorePrefix is the prefix of the self filestore file name.
 const SelfFilestorePrefix = ".gvisor.filestore."
 
 // DirentHandler is a function that handles a dirent.
 type DirentHandler func(ino uint64, off int64, ftype uint8, name string, reclen uint16)
 
-// ForEachDirent retrieves all dirents from dirfd using getdents64(2) and
-// invokes handleDirent on them.
-func ForEachDirent(dirfd int, handleDirent DirentHandler) error {
-	if _, err := unix.Seek(dirfd, unix.SEEK_SET, 0); err != nil {
-		return err
-	}
-	var direntsBuf [8192]byte
-	for {
-		n, err := unix.Getdents(dirfd, direntsBuf[:])
-		if err != nil {
-			return err
-		}
-		if n <= 0 {
-			return nil
-		}
-		ParseDirents(direntsBuf[:n], handleDirent)
-	}
-}
 
-// DirentNames retrieves all dirents from dirfd using getdents64(2) and returns
+// DirentNames retrieves all dirents from dirfd with ForEachDirent and returns
 // all the recorded dirent names.
 func DirentNames(dirfd int) ([]string, error) {
 	var names []string
@@ -51,11 +31,4 @@ func DirentNames(dirfd int) ([]string, error) {
 		names = append(names, name)
 	})
 	return names, err
-}
-
-// RenameAt is a convenience wrapper to make the renameat syscall.
-//
-// RenameAt is equivalent to RenameAt2 with a zero flags argument.
-func RenameAt(oldDirFD int, oldName string, newDirFD int, newName string) error {
-	return RenameAt2(oldDirFD, oldName, newDirFD, newName, 0)
 }
