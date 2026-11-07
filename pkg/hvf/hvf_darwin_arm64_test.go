@@ -211,3 +211,44 @@ func BenchmarkHVCRoundTrip(b *testing.B) {
 		b.Fatalf("exit = %+v, want HVC", *e)
 	}
 }
+
+// BenchmarkSetReg measures one general register write.
+func BenchmarkSetReg(b *testing.B) {
+	v := newGuest(b, insnBSelf)
+	for b.Loop() {
+		if err := v.SetReg(RegX0, 1); err != nil {
+			b.Fatalf("SetReg: %v", err)
+		}
+	}
+}
+
+// BenchmarkReg measures one general register read.
+func BenchmarkReg(b *testing.B) {
+	v := newGuest(b, insnBSelf)
+	for b.Loop() {
+		if _, err := v.Reg(RegX0); err != nil {
+			b.Fatalf("Reg: %v", err)
+		}
+	}
+}
+
+// BenchmarkSetSIMDFPReg measures one SIMD and FP register write.
+func BenchmarkSetSIMDFPReg(b *testing.B) {
+	v := newGuest(b, insnBSelf)
+	var q [16]byte
+	for b.Loop() {
+		if err := v.SetSIMDFPReg(0, q); err != nil {
+			b.Fatalf("SetSIMDFPReg: %v", err)
+		}
+	}
+}
+
+// BenchmarkSIMDFPReg measures one SIMD and FP register read.
+func BenchmarkSIMDFPReg(b *testing.B) {
+	v := newGuest(b, insnBSelf)
+	for b.Loop() {
+		if _, err := v.SIMDFPReg(0); err != nil {
+			b.Fatalf("SIMDFPReg: %v", err)
+		}
+	}
+}
