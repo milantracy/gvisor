@@ -124,7 +124,7 @@ func (d *dentry) openHandle(ctx context.Context, read, write, trunc bool) (handl
 		log.Debugf("openHandle called with read = write = false. Falling back to read only FD.")
 	}
 	if trunc {
-		flags |= unix.O_TRUNC
+		flags |= linux.O_TRUNC
 	}
 	switch it := d.inode.impl.(type) {
 	case *lisafsInode:
