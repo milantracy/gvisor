@@ -118,6 +118,12 @@ linux/arm64 cross-build whose tests run in a `debian:trixie` container.
 | `//pkg/sentry/socket/unix/transport` | ok | pass | pass | Family from `getsockname`; `SO_NOSIGPIPE`; no `SO_PASSCRED` |
 | `//pkg/lisafs` | ok | pass | pass | Linux ABI values on the wire; kqueue hangup watchdog on darwin |
 | `//tools/bazeldefs:tags.bzl` | | | | `_darwin` file suffix; see below |
+| `//pkg/sentry/pgalloc` | ok | pass | pass | `F_PUNCHHOLE` decommit; commit writes zeros; no huge page hints or `MADV_POPULATE_WRITE` |
+| `//pkg/sentry/fsimpl/eventfd` | ok | pass (1 skipped) | builds | No host eventfd on darwin |
+| `//pkg/sentry/platform` | ok | no tests | builds | `vm.mmap_min_addr` read only on Linux; 65536 on darwin |
+| `//pkg/sentry/contexttest` | ok | | not checked | ptrace platform only on Linux; nil platform on darwin |
+| `//pkg/sentry/fsutil` | ok | pass | pass | No `MAP_FIXED_NOREPLACE`; the address is a hint |
+| `//pkg/sentry/socket`, `socket/netstack`, `socket/unix`, `fsimpl/gofer` | ok | pass | pass | Linux ABI constants for guest values; see below |
 
 ### Second pass over the demo path (2026-11-06)
 
@@ -167,6 +173,19 @@ These differ from Linux and matter beyond the build:
     shutdown, and pending data does not wake it. A kqueue `EVFILT_READ`
     filter with `EV_CLEAR` and `NOTE_LOWAT` above the buffer size reports
     `EV_EOF` in all cases.
+-   **Linux ABI values must not come from `unix.*`.** On a Linux host,
+    `unix.AF_INET6`, `unix.SizeofCmsghdr` and `unix.SYS_SETSOCKOPT` equal
+    the guest values, so the Sentry used them for application values. On
+    darwin they differ (`AF_INET6` is 30, Linux 10; `cmsghdr` is 12 bytes,
+    Linux 16). Use `linux.*` for anything the application sees. The compiler
+    finds only the constants that darwin does not define; a search for
+    `unix.` in code that handles application values finds the rest.
+-   **APFS `SEEK_DATA` does not see pages that are dirtied through a
+    mapping** until they are written back (`msync`; `fsync` is not enough),
+    and it reports data in 16 KiB units. pgalloc already does not trust
+    `SEEK_DATA` on an unknown filesystem, so save scans every committed
+    page. Files are sparse after `ftruncate` (1 GiB truncate: 0 bytes
+    allocated).
 -   **No file seals.** The flipcall packet window cannot get
     `F_SEAL_SHRINK`, so a peer that truncates it causes SIGBUS in the other
     party.
@@ -183,12 +202,29 @@ methods on Linux. nogo found this, because it type-checks each package for
 linux/amd64 and linux/arm64 too. Run the `_nogo` targets on darwin after each
 change.
 
+### Building Linux targets on a Mac host
+
+The seccomp precompile rule (`pkg/seccomp/precompiledseccomp`) builds its
+generator for the target and runs it during the build. For a Linux target
+on a Mac host it needs a QEMU user-mode toolchain, which exists only for
+Linux hosts, so it fails with exit 126. This affects every target that
+reaches `platform/ptrace`, `systrap` or `kvm` for Linux, including the
+linux/amd64 and linux/arm64 nogo analyses of those packages and Linux tests
+that use `contexttest`. Check these on a Linux host, or with `make test`.
+
 ### Third pass over the demo path (2026-11-07)
 
 | Package | First errors |
 |---|---|
 | `//pkg/sentry/pgalloc` | `unix.Fallocate`, `FALLOC_FL_PUNCH_HOLE`, `MADV_HUGEPAGE`, `MADV_NOHUGEPAGE`, `MADV_POPULATE_WRITE` |
 | `//pkg/sentry/fsimpl/eventfd` | `unix.Eventfd` |
+
+Both are done. Later passes found `sentry/fsutil`, `sentry/socket` and
+`socket/unix` (done), then:
+
+| Package | First errors |
+|---|---|
+| `//pkg/sentry/fsimpl/host` | `statx`, epoll, `Stat_t` layout, host terminal `ioctl`s |
 
 ## vDSO
 
