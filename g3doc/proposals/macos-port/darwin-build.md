@@ -562,8 +562,11 @@ the server uses too.
 Result (2026-11-07): the client builds on darwin and Linux, and
 `//pkg/sentry/fsimpl/gofer:gofer_test` passes on darwin.
 
-Next: `hvfboot -v <host dir>:<guest dir>` with a gofer process, then Python
-reading and writing host files.
+Next: an `hvfboot gofer` process that serves all host mounts, as
+`runsc gofer` does (one socket pair per mount, root first, then mounts in
+order), and `hvfboot -v <host dir>:<guest dir>`; then Seatbelt profiles for
+the gofer and the Sentry. `runsc-comparison.md` compares each layer with
+`runsc`.
 
 ## vDSO
 

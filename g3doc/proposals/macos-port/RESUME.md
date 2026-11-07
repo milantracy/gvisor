@@ -32,6 +32,7 @@ must not change.
 | `phase0-results.md` | Phase 0 probe results and summary. |
 | `memory-mapping-options.md` | Whole-VA (A) against on-demand IPA registry (B); (B) is decided. |
 | `darwin-build.md` | macOS host setup and the state of the native darwin Bazel build. |
+| `runsc-comparison.md` | `runsc` on Linux and the macOS port, layer by layer: processes, file systems, confinement of the Sentry and the gofer, networking, with status. |
 | `feasibility-report.md` | The reviewed report (~9,100 words). Passed three rounds of independent review on 2026-11-06; both reviewers agree with the final design. Read this first. |
 | `research_notes/sentry_platform_host_dependencies.md` | Inventory of Linux-host dependencies in the platform, ring0, pgalloc, signal and syscall layers, with `file:line` references at commit `f51a205a8`. |
 | `research_notes/runsc_fs_net_build_dependencies.md` | Same inventory for runsc, gofer/lisafs/directfs/EROFS, netstack link layers, seccomp/cgroups, and the Bazel/`go` branch build. Includes the `GOOS=darwin` build experiment results. |
@@ -104,8 +105,12 @@ before the spin-then-wait hand-off and batched register calls; see
 Phase 2 started on 2026-11-07 with the gofer. The lisafs server
 (`runsc/gofer/fs`) runs on darwin and passes the lisafs test suite, and the
 Sentry's gofer client builds on darwin with lisafs only (no directfs); see
-"Gofer" in `darwin-build.md`. Next: `hvfboot -v` with a separate gofer
-process, Python on host files, then networking and Seatbelt. Lazy FP state
+"Gofer" in `darwin-build.md`. The port follows the `runsc` process model: one
+gofer process serves all host mounts, and Seatbelt profiles replace the
+`pivot_root`, `chroot`, namespaces and seccomp of `runsc`
+(`runsc-comparison.md`). Next: `hvfboot gofer` and `hvfboot -v`, the
+gofer's Seatbelt profile, the Sentry's Seatbelt profile, Python on host
+files, then networking. Lazy FP state
 and EL0 ID-register `MRS` emulation (low priority: the KVM platform does not
 emulate it either) are deferred.
 
