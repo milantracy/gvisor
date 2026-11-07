@@ -63,15 +63,15 @@ They are kept until the split is confirmed, and get no new commits.
 - The EL1 stub carries the fast-path table, EL0 ID-register `MRS` emulation, and a TLBI mailbox executed on every guest entry (a host-side Sentry cannot `tlbi`; `hv_vcpu_invalidate_tlb` is macOS 27+).
 - Lazy FP/SIMD via the systrap `PullFullState` contract, with FP save/restore on every vCPU hand-off between different tasks.
 - Hypervisor.framework bindings are cgo-free and in tree at `pkg/hvf`; the platform is in tree at `pkg/sentry/platform/hvf`; darwin host shims for the leaf packages are in tree, aimed at upstream.
-- A design doc goes on google/gvisor#1270 after Phase 0 and before any platform code lands.
+- The work is not tracked on google/gvisor#1270 or any other upstream issue.
 
 ## Status
 
 Phase 0 probes 1-10 are done (2026-11-06, Apple M2 Max, macOS 26.6.2). The
 results and a summary are in `phase0-results.md`; the probes are in
 `tools/hvf-probe/` on the `macos-port/probe` branch. Still open: the
-KVM comparison for probe 1 on an arm64 Linux host (`tools/hvf-probe/kvm/`),
-and the design doc on google/gvisor#1270. The A/B decision is (B).
+KVM comparison for probe 1 on an arm64 Linux host (`tools/hvf-probe/kvm/`).
+The A/B decision is (B).
 
 The implementation is on `macos-port/prototype` (`darwin-build.md` has the
 host setup and the build history). Native Bazel works on the
@@ -90,9 +90,12 @@ parameter page. The IPA registry
 through `Context.Switch` (checkpoint 2, 2026-11-07). `runsc/hvfboot` runs
 Debian's static busybox from an EROFS image with 16 KiB blocks: `echo
 hello`, `dmesg`, and `sh -c` with fork, exec, pipes and exit statuses
-(checkpoints 3 and 4, the Phase 1 exit criterion, 2026-11-07). Next:
-system call cost (13.7 µs through `Switch`), ID register emulation, host
-TTYs, and splitting the branch into PRs.
+(checkpoints 3 and 4, the Phase 1 exit criterion, 2026-11-07).
+
+Short-term goal (2026-11-07): run a Python program. Next: the correctness
+gaps (EL0 ID-register `MRS` emulation, page-table release and recycle),
+system call cost (13.7 µs through `Switch`), then Phase 2 (darwin gofer,
+networking, Seatbelt).
 
 ## Phase 0 probe plan (done)
 
