@@ -292,6 +292,38 @@ Results, 2026-11-07:
 not build on darwin at any page size (it uses memfd seals). `systrap` still
 has 4K and 64K variants only; it is not built on darwin.
 
+## IPA registry
+
+`//pkg/sentry/platform/hvf/ipa` maps host ranges to IPA on demand
+(decision (B), `memory-mapping-options.md`). It is pure Go behind a `Mapper`
+interface, so its tests use a fake stage 2 that, like HVF, rejects a map over
+a mapped IPA, and run on both OSes.
+
+-   `Translate(addr, length, flags, fn)` gives the IPA of each part of a host
+    range. It registers and maps parts that are not registered yet
+    (requirement 4: only ranges that the caller has mapped), and adds
+    permissions with `Protect`.
+-   IPA is bump-allocated and never reused, so a stale guest stage-1 entry
+    cannot reach new memory (requirement 1). A region of at least 32 MiB gets
+    an IPA equal to its host address modulo 32 MiB, for PMD blocks.
+-   The owners of host mappings call `memutil.WillUnmap` before `munmap`
+    (`pgalloc` chunks, `fsutil` cached and precise mappings, the EROFS
+    image) and `memutil.WillReplace` before `mmap(MAP_FIXED)` over a
+    mapping (`fsutil` read-to-write upgrades and `RegenerateMappings`).
+    The registry is the `memutil.MappingObserver`. `WillUnmap` removes the
+    stage-2 mapping and forgets the range. `WillReplace` removes the stage-2
+    mapping and keeps the IPA; `Translate` or `Refault` (on a stage-2 fault,
+    requirement 5) maps the new host pages at the same IPA.
+-   On darwin the EROFS image is mapped `MAP_PRIVATE` (requirement 6).
+
+EROFS needs a block size of at least `hostarch.PageSize`, so with 16K pages
+an image must be made with `mkfs.erofs -b 16384`. The `erofs` test that
+hard-coded 4 KiB blocks now uses `hostarch.PageSize`.
+
+Not done yet: the guest-memory `pagetables.Allocator` (requirement 9) and
+`hv_vm_unmap` before `F_PUNCHHOLE` decommit of mapped `pgalloc` ranges.
+Both are part of the platform step.
+
 ## vDSO
 
 The vDSO is a `-nostdlib` Linux ELF, built for both arm64 and amd64 by a
