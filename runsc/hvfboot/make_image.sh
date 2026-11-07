@@ -29,6 +29,7 @@ if [[ $# -ne 2 ]]; then
   echo "usage: $0 <output.erofs> <image>" >&2
   exit 2
 fi
+mkdir -p "$(dirname "$1")"
 out="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 image="$2"
 erofs_utils=1.8.6
