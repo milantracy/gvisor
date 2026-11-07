@@ -17,6 +17,8 @@
 package fs
 
 import (
+	"os"
+
 	"golang.org/x/sys/unix"
 	"gvisor.dev/gvisor/pkg/abi/linux"
 	"gvisor.dev/gvisor/pkg/lisafs"
@@ -50,6 +52,62 @@ const (
 	xattrCreate  = 0x2
 	xattrReplace = 0x4
 )
+
+// mapRoot is true if MapRootToEffectiveIDs was called.
+var mapRoot bool
+
+// MapRootToEffectiveIDs makes the gofer map IDs as the user namespace of
+// rootless runsc on Linux does. darwin has no user namespaces. The user
+// namespace maps only the sandbox root to the user that runs the sandbox:
+//   - The sandbox UID and GID 0 are the EUID and EGID of the gofer.
+//   - Other host IDs are the overflow IDs in the sandbox.
+//   - The sandbox cannot set other IDs as owners (EINVAL).
+//
+// Without it, sandbox IDs are host IDs. Call it before the gofer serves
+// connections.
+func MapRootToEffectiveIDs() {
+	mapRoot = true
+}
+
+// overflowUID is the overflow UID of Linux, /proc/sys/kernel/overflowuid.
+const overflowUID = 65534
+
+// sandboxUID returns the sandbox UID of the host UID uid.
+func sandboxUID(uid uint32) uint32 {
+	switch {
+	case !mapRoot:
+		return uid
+	case uid == uint32(os.Geteuid()):
+		return 0
+	default:
+		return overflowUID
+	}
+}
+
+// sandboxGID returns the sandbox GID of the host GID gid.
+func sandboxGID(gid uint32) uint32 {
+	switch {
+	case !mapRoot:
+		return gid
+	case gid == uint32(os.Getegid()):
+		return 0
+	default:
+		return overflowGID
+	}
+}
+
+// hostID returns the host ID of the sandbox ID id, or -1 for -1. hostRoot is
+// the host ID of the sandbox ID 0.
+func hostID(id, hostRoot int) (int, error) {
+	switch {
+	case !mapRoot || id == -1:
+		return id, nil
+	case id == 0:
+		return hostRoot, nil
+	default:
+		return -1, unix.EINVAL
+	}
+}
 
 // tryOpenFlags are the open flags that tryOpen tries in order.
 var tryOpenFlags = []int{
@@ -139,9 +197,18 @@ func utimensat(dirFD int, name string, times [2]unix.Timespec, flags int) error 
 	return unix.UtimesNanoAt(dirFD, name, times[:], flags)
 }
 
-// fchownFD changes the owners of the file of hostFD. A symlink FD (opened
-// with O_SYMLINK) refers to the symlink itself.
+// fchownFD changes the owners of the file of hostFD to the sandbox IDs uid
+// and gid; -1 leaves an ID unchanged. A symlink FD (opened with O_SYMLINK)
+// refers to the symlink itself.
 func fchownFD(hostFD, uid, gid int) error {
+	uid, err := hostID(uid, os.Geteuid())
+	if err != nil {
+		return err
+	}
+	gid, err = hostID(gid, os.Getegid())
+	if err != nil {
+		return err
+	}
 	return unix.Fchown(hostFD, uid, gid)
 }
 
@@ -258,8 +325,8 @@ func fstatTo(hostFD int) (lisafs.Statx, error) {
 		DevMajor:  unix.Major(dev),
 		Ino:       stat.Ino,
 		Nlink:     uint32(stat.Nlink),
-		UID:       stat.Uid,
-		GID:       stat.Gid,
+		UID:       sandboxUID(stat.Uid),
+		GID:       sandboxGID(stat.Gid),
 		RdevMinor: unix.Minor(rdev),
 		RdevMajor: unix.Major(rdev),
 		Size:      uint64(stat.Size),
