@@ -43,3 +43,8 @@ func ForEachDirent(dirfd int, handleDirent DirentHandler) error {
 func RenameAt(oldDirFD int, oldName string, newDirFD int, newName string) error {
 	return RenameAt2(oldDirFD, oldName, newDirFD, newName, 0)
 }
+
+// Fallocate is a convenience wrapper to make the fallocate syscall.
+func Fallocate(fd int, mode, offset, length uint64) error {
+	return unix.Fallocate(fd, uint32(mode), int64(offset), int64(length))
+}

@@ -115,14 +115,6 @@ func readlinkFD(hostFD int, buf []byte) (int, error) {
 	return unix.Readlinkat(hostFD, "", buf)
 }
 
-func renameAt(oldDirFD int, oldName string, newDirFD int, newName string) error {
-	return fsutil.RenameAt(oldDirFD, oldName, newDirFD, newName)
-}
-
-func renameAt2(oldDirFD int, oldName string, newDirFD int, newName string, flags uint32) error {
-	return fsutil.RenameAt2(oldDirFD, oldName, newDirFD, newName, flags)
-}
-
 // hostOpenFlags returns the host open flags for the Linux open flags that
 // lisafs allows (the access mode and O_TRUNC).
 func hostOpenFlags(flags uint32) int {
@@ -137,10 +129,6 @@ func hostUnlinkFlags(flags uint32) int {
 // xattrFlags returns the host flags for the Linux setxattr(2) flags.
 func xattrFlags(flags uint32) int {
 	return int(flags)
-}
-
-func fallocate(hostFD int, mode, off, length uint64) error {
-	return unix.Fallocate(hostFD, uint32(mode), int64(off), int64(length))
 }
 
 // getdents reads directory entries of hostFD into buf, in the format that

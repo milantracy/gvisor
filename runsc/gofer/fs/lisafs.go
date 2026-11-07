@@ -990,12 +990,12 @@ func (fd *controlFDLisa) Unlink(name string, flags uint32) error {
 
 // RenameAt implements lisafs.ControlFDImpl.RenameAt.
 func (fd *controlFDLisa) RenameAt(oldName string, newDir lisafs.ControlFDImpl, newName string) error {
-	return renameAt(fd.hostFD, oldName, newDir.(*controlFDLisa).hostFD, newName)
+	return fsutil.RenameAt(fd.hostFD, oldName, newDir.(*controlFDLisa).hostFD, newName)
 }
 
 // RenameAt2 implements lisafs.ControlFDImpl.RenameAt2.
 func (fd *controlFDLisa) RenameAt2(oldName string, newDir lisafs.ControlFDImpl, newName string, flags uint32) error {
-	return renameAt2(fd.hostFD, oldName, newDir.(*controlFDLisa).hostFD, newName, flags)
+	return fsutil.RenameAt2(fd.hostFD, oldName, newDir.(*controlFDLisa).hostFD, newName, flags)
 }
 
 // Renamed implements lisafs.ControlFDImpl.Renamed.
@@ -1151,7 +1151,7 @@ func (fd *openFDLisa) Read(buf []byte, off uint64) (uint64, error) {
 
 // Allocate implements lisafs.OpenFDImpl.Allocate.
 func (fd *openFDLisa) Allocate(mode, off, length uint64) error {
-	return fallocate(fd.hostFD, mode, off, length)
+	return fsutil.Fallocate(fd.hostFD, mode, off, length)
 }
 
 // Flush implements lisafs.OpenFDImpl.Flush.

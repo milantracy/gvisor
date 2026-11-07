@@ -622,6 +622,10 @@ func (fstype FilesystemType) GetFilesystem(ctx context.Context, vfsObj *vfs.Virt
 	}
 	if _, ok := mopts[moptDirectfs]; ok {
 		delete(mopts, moptDirectfs)
+		if !directfsSupported {
+			ctx.Warningf("gofer.FilesystemType.GetFilesystem: %s is not supported on this host", moptDirectfs)
+			return nil, nil, linuxerr.EINVAL
+		}
 		fsopts.directfs.enabled = true
 	}
 	if _, ok := mopts[moptVirtualInodeNumbers]; ok {
@@ -898,22 +902,6 @@ func inoKeyFromStatx(stat *lisafs.Statx) inoKey {
 		ino:      stat.Ino,
 		devMinor: stat.DevMinor,
 		devMajor: stat.DevMajor,
-	}
-}
-
-func inoKeyFromUnixStatx(stat *unix.Statx_t) inoKey {
-	return inoKey{
-		ino:      stat.Ino,
-		devMinor: stat.Dev_minor,
-		devMajor: stat.Dev_major,
-	}
-}
-
-func inoKeyFromStat(stat *unix.Stat_t) inoKey {
-	return inoKey{
-		ino:      stat.Ino,
-		devMinor: unix.Minor(stat.Dev),
-		devMajor: unix.Major(stat.Dev),
 	}
 }
 
@@ -1432,15 +1420,13 @@ func (d *dentry) refreshSizeLocked(ctx context.Context) error {
 		return d.inode.updateMetadataLocked(ctx, noHandle)
 	}
 
-	// Using statx(2) with a minimal mask is faster than fstat(2).
-	var stat unix.Statx_t
 	// Can use RacyLoad() because handleMu is locked.
-	err := unix.Statx(int(d.inode.writeFD.RacyLoad()), "", unix.AT_EMPTY_PATH, unix.STATX_SIZE, &stat)
+	size, err := hostFileSize(int(d.inode.writeFD.RacyLoad()))
 	d.inode.handleMu.RUnlock() // must be released before updateSizeLocked()
 	if err != nil {
 		return err
 	}
-	d.inode.updateSizeLocked(stat.Size)
+	d.inode.updateSizeLocked(size)
 	return nil
 }
 
@@ -2367,7 +2353,7 @@ func (d *dentry) ensureSharedHandle(ctx context.Context, read, write, trunc bool
 				// make the old file descriptor refer to the new file
 				// description, then close the new file descriptor (which is no
 				// longer needed).
-				if err := unix.Dup3(int(h.fd), int(d.inode.readFD.RacyLoad()), unix.O_CLOEXEC); err != nil {
+				if err := dupOver(int(h.fd), int(d.inode.readFD.RacyLoad())); err != nil {
 					oldFD := d.inode.readFD.RacyLoad()
 					d.inode.handleMu.Unlock()
 					ctx.Warningf("gofer.dentry.ensureSharedHandle: failed to dup fd %d to fd %d: %v", h.fd, oldFD, err)

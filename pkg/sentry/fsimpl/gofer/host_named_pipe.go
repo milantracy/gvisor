@@ -15,33 +15,12 @@
 package gofer
 
 import (
-	"fmt"
-	"sync"
 	"time"
 
-	"golang.org/x/sys/unix"
 	"gvisor.dev/gvisor/pkg/context"
 	"gvisor.dev/gvisor/pkg/errors/linuxerr"
 	"gvisor.dev/gvisor/pkg/waiter"
 )
-
-// Global pipe used by blockUntilNonblockingPipeHasWriter since we can't create
-// pipes after sentry initialization due to syscall filters.
-var (
-	tempPipeMu      sync.Mutex
-	tempPipeReadFD  int
-	tempPipeWriteFD int
-	tempPipeBuf     [1]byte
-)
-
-func init() {
-	var pipeFDs [2]int
-	if err := unix.Pipe(pipeFDs[:]); err != nil {
-		panic(fmt.Sprintf("failed to create pipe for gofer.blockUntilNonblockingPipeHasWriter: %v", err))
-	}
-	tempPipeReadFD = pipeFDs[0]
-	tempPipeWriteFD = pipeFDs[1]
-}
 
 func blockUntilNonblockingPipeHasWriter(ctx context.Context, fd int32) error {
 	for {
@@ -73,31 +52,6 @@ func blockUntilNonblockingPipeHasWriter(ctx context.Context, fd int32) error {
 			return sleepErr
 		}
 	}
-}
-
-func nonblockingPipeHasWriter(fd int32) (bool, error) {
-	tempPipeMu.Lock()
-	defer tempPipeMu.Unlock()
-	// Copy 1 byte from fd into the temporary pipe.
-	n, err := unix.Tee(int(fd), tempPipeWriteFD, 1, unix.SPLICE_F_NONBLOCK)
-	if linuxerr.Equals(linuxerr.EAGAIN, err) {
-		// The pipe represented by fd is empty, but has a writer.
-		return true, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if n == 0 {
-		// The pipe represented by fd is empty and has no writer.
-		return false, nil
-	}
-	// The pipe represented by fd is non-empty, so it either has, or has
-	// previously had, a writer. Remove the byte copied to the temporary pipe
-	// before returning.
-	if n, err := unix.Read(tempPipeReadFD, tempPipeBuf[:]); err != nil || n != 1 {
-		panic(fmt.Sprintf("failed to drain pipe for gofer.blockUntilNonblockingPipeHasWriter: got (%d, %v), wanted (1, nil)", n, err))
-	}
-	return true, nil
 }
 
 func sleepBetweenNamedPipeOpenChecks(ctx context.Context) error {

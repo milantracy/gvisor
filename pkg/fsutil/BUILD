@@ -10,6 +10,7 @@ go_library(
         "fsutil.go",
         "fsutil_amd64_unsafe.go",
         "fsutil_arm64_unsafe.go",
+        "fsutil_darwin.go",
         "fsutil_darwin_unsafe.go",
         "fsutil_linux.go",
         "fsutil_unsafe.go",
@@ -17,6 +18,7 @@ go_library(
     importpath = "gvisor.dev/gvisor/pkg/fsutil",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/abi/linux",
         "//pkg/syserr",
         "@org_golang_x_sys//unix:go_default_library",
     ],

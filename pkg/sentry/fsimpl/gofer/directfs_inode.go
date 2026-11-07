@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build linux
+
 package gofer
 
 import (
@@ -35,6 +37,26 @@ import (
 	"gvisor.dev/gvisor/pkg/sentry/vfs"
 	"gvisor.dev/gvisor/pkg/sync"
 )
+
+func inoKeyFromUnixStatx(stat *unix.Statx_t) inoKey {
+	return inoKey{
+		ino:      stat.Ino,
+		devMinor: stat.Dev_minor,
+		devMajor: stat.Dev_major,
+	}
+}
+
+func inoKeyFromStat(stat *unix.Stat_t) inoKey {
+	return inoKey{
+		ino:      stat.Ino,
+		devMinor: unix.Minor(stat.Dev),
+		devMajor: unix.Major(stat.Dev),
+	}
+}
+
+func dentryTimestampFromUnix(t unix.StatxTimestamp) int64 {
+	return dentryTimestamp(lisafs.StatxTimestamp{Sec: t.Sec, Nsec: t.Nsec})
+}
 
 // LINT.IfChange
 

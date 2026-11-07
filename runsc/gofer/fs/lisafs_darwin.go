@@ -164,25 +164,6 @@ func readlinkFD(hostFD int, buf []byte) (int, error) {
 	return freadlink(hostFD, buf)
 }
 
-func renameAt(oldDirFD int, oldName string, newDirFD int, newName string) error {
-	return unix.Renameat(oldDirFD, oldName, newDirFD, newName)
-}
-
-func renameAt2(oldDirFD int, oldName string, newDirFD int, newName string, flags uint32) error {
-	var hostFlags uint32
-	switch flags {
-	case 0:
-	case linux.RENAME_NOREPLACE:
-		hostFlags = unix.RENAME_EXCL
-	case linux.RENAME_EXCHANGE:
-		hostFlags = unix.RENAME_SWAP
-	default:
-		// Including RENAME_WHITEOUT.
-		return unix.EINVAL
-	}
-	return unix.RenameatxNp(oldDirFD, oldName, newDirFD, newName, hostFlags)
-}
-
 // hostOpenFlags returns the host open flags for the Linux open flags that
 // lisafs allows (the access mode and O_TRUNC).
 func hostOpenFlags(flags uint32) int {
@@ -211,31 +192,6 @@ func xattrFlags(flags uint32) int {
 		hostFlags |= xattrReplace
 	}
 	return hostFlags
-}
-
-// fallocate supports only mode 0: it reserves space up to off+length with
-// F_PREALLOCATE, and extends the file to off+length.
-func fallocate(hostFD int, mode, off, length uint64) error {
-	if mode != 0 {
-		return unix.EOPNOTSUPP
-	}
-	var stat unix.Stat_t
-	if err := unix.Fstat(hostFD, &stat); err != nil {
-		return err
-	}
-	end := int64(off + length)
-	if end <= stat.Size {
-		return nil
-	}
-	store := unix.Fstore_t{
-		Flags:   unix.F_ALLOCATEALL,
-		Posmode: unix.F_PEOFPOSMODE,
-		Length:  end - stat.Size,
-	}
-	if err := unix.FcntlFstore(uintptr(hostFD), unix.F_PREALLOCATE, &store); err != nil {
-		return err
-	}
-	return unix.Ftruncate(hostFD, end)
 }
 
 // getdents reads directory entries of hostFD into buf, in the format that
