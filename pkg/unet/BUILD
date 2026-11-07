@@ -9,6 +9,8 @@ go_library(
     name = "unet",
     srcs = [
         "unet.go",
+        "unet_darwin.go",
+        "unet_linux_unsafe.go",
         "unet_unsafe.go",
     ],
     visibility = ["//visibility:public"],
