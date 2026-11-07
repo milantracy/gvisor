@@ -784,9 +784,9 @@ func fdsToHostFiles(ctx context.Context, fds []int) ([]*vfs.FileDescription, boo
 	for _, fd := range fds {
 		// Get flags. We do it here because they may be modified
 		// by subsequent functions.
-		fileFlags, _, errno := unix.Syscall(unix.SYS_FCNTL, uintptr(fd), unix.F_GETFL, 0)
-		if errno != 0 {
-			ctx.Warningf("Error retrieving host FD flags: %v", error(errno))
+		fileFlags, err := host.StatusFlags(fd)
+		if err != nil {
+			ctx.Warningf("Error retrieving host FD flags: %v", err)
 			break
 		}
 
@@ -797,7 +797,7 @@ func fdsToHostFiles(ctx context.Context, fds []int) ([]*vfs.FileDescription, boo
 			break
 		}
 
-		if err := file.SetStatusFlags(ctx, auth.CredentialsFromContext(ctx), uint32(fileFlags&linux.O_NONBLOCK)); err != nil {
+		if err := file.SetStatusFlags(ctx, auth.CredentialsFromContext(ctx), fileFlags&linux.O_NONBLOCK); err != nil {
 			ctx.Warningf("Error setting flags on host FD file: %v", err)
 			file.DecRef(ctx)
 			break
