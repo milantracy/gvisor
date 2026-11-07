@@ -117,7 +117,11 @@ private `TMPDIR`, and denies exec and network (`//pkg/seatbelt`). The
 Sentry opens its host resources, then applies a Seatbelt profile that denies
 all file access, exec, network and IPC, in place of the `pivot_root` of
 `runsc`; it allows only `fstat` of its standard I/O files and of files under
-the mount sources. Next: networking. Lazy FP state
+the mount sources. Networking works as in `runsc`: the Sentry runs netstack
+and has only a packet link, here a datagram socket pair to a network proxy
+process (`hvfboot net`) that makes the host connections and runs under its
+own Seatbelt profile; `pip download` works ("Networking" in
+`darwin-build.md`). Lazy FP state
 and EL0 ID-register `MRS` emulation (low priority: the KVM platform does not
 emulate it either) are deferred.
 

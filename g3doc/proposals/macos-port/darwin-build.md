@@ -699,7 +699,71 @@ Result (2026-11-07):
 connections close, at the latest when the Sentry exits. A gofer that is
 killed (`SIGKILL`) leaves its empty `TMPDIR`.
 
-Next: networking. `runsc-comparison.md` compares each layer with `runsc`.
+## Networking
+
+`runsc` runs netstack in the Sentry. The only network access of the Sentry
+is an `AF_PACKET` socket on a veth in the network namespace of the sandbox,
+and the host kernel routes and NATs. darwin has no network namespaces or
+veth, and `vmnet` needs root or a restricted entitlement. So `hvfboot` uses
+a network proxy process, as gvproxy (gvisor-tap-vsock) does for Podman:
+
+-   The Sentry runs netstack with `lo` and `eth0` (10.0.2.15/24, default
+    route via 10.0.2.2). A new network namespace has `lo` only, as in
+    `runsc`. The netlink route socket is registered.
+-   The link of `eth0` is a `SOCK_DGRAM` Unix socket pair: one IP packet per
+    datagram, no link header, MTU 65520. darwin limits a Unix datagram to
+    the send buffer size (2 KiB by default), so both ends set 1 MiB send and
+    4 MiB receive buffers. The Sentry opens it before it is confined.
+-   `hvfboot net` (the same binary) has its own netstack on the other end,
+    in promiscuous and spoofing mode. Its TCP and UDP forwarders end each
+    flow of the sandbox and make a host connection for it.
+-   DNS: TCP and UDP to port 53 of any address go to the first nameserver of
+    the host `/etc/resolv.conf`, which the proxy reads before it is
+    confined. So the `nameserver` lines of the image do not matter, and the
+    DNS configuration of the host applies. An image without
+    `/etc/resolv.conf` can get one with `-v file:/etc/resolv.conf:ro`.
+-   Refused: loopback and unspecified destinations, and the sandbox network
+    (TCP gets a reset).
+-   A read on a Unix datagram socket does not return when the peer closes,
+    so the proxy also gets a `SOCK_STREAM` lifeline socket. It exits when
+    the lifeline closes, which happens when the Sentry exits.
+-   Only IPv4 TCP and UDP. No ICMP (`ping`) and no inbound port forwarding.
+-   `-network=none` gives loopback only and starts no proxy.
+
+The proxy runs under a Seatbelt profile:
+
+```
+(version 1)
+(deny default)
+(allow network-outbound (remote ip "*:*"))
+(deny network-outbound (remote ip "localhost:*"))
+```
+
+For Seatbelt, `localhost` is every address of the host, also the addresses
+of its network interfaces (checked with `sandbox-exec`: a connection to the
+LAN address of the Mac is denied with this rule and allowed without it). So
+the sandbox cannot connect to services on the Mac, also through its LAN
+address.
+
+Result (2026-11-07, Python 3.13):
+
+-   DNS (about 15 ms), HTTP and HTTPS to public servers, `pip download
+    requests` (5 wheels), UDP (an NTP query to `time.apple.com`), 200 HTTP
+    requests on 50 threads, UDP datagrams up to 8000 bytes.
+-   Throughput through the proxy: 1.5 GB/s from an HTTP server on the LAN
+    address of the Mac (5.2 GB/s on the host), measured before the profile
+    denied that address. Downloads from the internet run at the speed of the
+    internet link.
+-   `//runsc/hvfboot:confine_test` checks the proxy profile: connections to
+    host loopback and Unix sockets, file access and exec are denied, and UDP
+    sends are allowed.
+-   40 runs each with and without a host mount, and 20 with
+    `-network=none`, complete with no process left.
+-   `python3 -c pass` takes 29 ms (28 ms with `-network=none`); with one host
+    mount, 37 ms.
+
+Next: see the Status section of RESUME.md. `runsc-comparison.md` compares
+each layer with `runsc`.
 
 ## vDSO
 

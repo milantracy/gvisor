@@ -65,9 +65,13 @@ Status values:
 
 | Layer | runsc on Linux | macOS port | Status |
 |---|---|---|---|
-| Default network | netstack in the Sentry with an `fdbased` link endpoint in a network namespace (veth) | netstack with a user-space proxy or vmnet | Later (Phase 2) |
+| Default network | netstack in the Sentry; its only link is an `AF_PACKET` socket on a veth in the network namespace of the sandbox (`fdbased`); the host kernel routes and NATs | netstack in the Sentry; its only link is a `SOCK_DGRAM` socket pair to `hvfboot net`, a proxy process that ends TCP and UDP flows in its own netstack and makes host connections | Done (IPv4 TCP and UDP) |
+| DNS | The `resolv.conf` of the container | Port 53 to any address goes to the host DNS server | Done |
+| Confinement of the network path | The host kernel, with namespaces | The proxy has a Seatbelt profile: outbound IP only, not to the host itself; no files, exec or IPC | Done |
+| New network namespaces | Loopback only | Loopback only | Done |
+| ICMP, IPv6, inbound ports | Supported | Not supported | Later |
 | Host network | `--network=host` (hostinet) | Not planned | Later |
-| None | `--network=none`: loopback only | Loopback only (the current state) | Done |
+| None | `--network=none`: loopback only | `-network=none`: loopback only | Done |
 
 ## Known differences that remain
 
@@ -91,5 +95,6 @@ Status values:
     FD limit.
 2.  Done: Seatbelt profile for the gofer (`//pkg/seatbelt`).
 3.  Done: Seatbelt profile for the Sentry, in place of `pivot_root`.
+4.  Done: networking through a proxy process with its own Seatbelt profile.
 
 None of these steps needs root.
