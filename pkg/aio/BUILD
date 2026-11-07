@@ -9,6 +9,7 @@ go_library(
     name = "aio",
     srcs = [
         "aio.go",
+        "aio_darwin_unsafe.go",
         "aio_linux_unsafe.go",
         "aio_unsafe.go",
     ],
