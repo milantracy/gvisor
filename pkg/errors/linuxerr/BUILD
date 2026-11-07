@@ -10,6 +10,8 @@ go_library(
     srcs = [
         "internal.go",
         "linuxerr.go",
+        "linuxerr_darwin.go",
+        "linuxerr_linux.go",
     ],
     importpath = "gvisor.dev/gvisor/pkg/errors/linuxerr",
     visibility = ["//visibility:public"],

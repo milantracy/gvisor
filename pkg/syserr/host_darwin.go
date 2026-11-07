@@ -21,6 +21,9 @@ import (
 	"fmt"
 
 	"golang.org/x/sys/unix"
+	"gvisor.dev/gvisor/pkg/abi/linux/errno"
+	"gvisor.dev/gvisor/pkg/errors"
+	"gvisor.dev/gvisor/pkg/errors/linuxerr"
 )
 
 const maxErrno = 107
@@ -41,4 +44,21 @@ func addHostTranslation(host unix.Errno, trans *Error) {
 		panic(fmt.Sprintf("duplicate translation for host errno %q (%d)", host.Error(), host))
 	}
 	darwinHostTranslations[host] = trans
+}
+
+// backwardsError returns the error value for a Linux errno. darwin errnos
+// have other values, so this is a linuxerr error, not a unix.Errno.
+func backwardsError(linuxErrno errno.Errno, message string) error {
+	if e, ok := linuxerr.FromErrno(linuxErrno); ok {
+		return e
+	}
+	return errors.New(linuxErrno, message)
+}
+
+// addLinuxOnlyHostTranslation adds the host translation for an errno that
+// only Linux has. darwin has none of these, except EDEADLK.
+func addLinuxOnlyHostTranslation(linuxErrno errno.Errno, trans *Error) {
+	if linuxErrno == errno.EDEADLOCK {
+		addHostTranslation(unix.EDEADLK, trans)
+	}
 }

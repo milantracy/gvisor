@@ -51,7 +51,7 @@ func New(message string, linuxTranslation errno.Errno) *Error {
 		panic(fmt.Sprint("invalid errno: ", err.errno))
 	}
 
-	e := error(unix.Errno(err.errno))
+	e := backwardsError(err.errno, message)
 	// linuxerr.ErrWouldBlock gets translated to linuxerr.EWOULDBLOCK and
 	// enables proper blocking semantics. This should temporary address the
 	// class of blocking bugs that keep popping up with the current state of
@@ -77,7 +77,37 @@ func NewDynamic(message string, linuxTranslation errno.Errno) *Error {
 func newWithHost(message string, linuxTranslation errno.Errno, hostErrno unix.Errno) *Error {
 	e := New(message, linuxTranslation)
 	addHostTranslation(hostErrno, e)
+	addLinuxTranslation(linuxTranslation, e)
 	return e
+}
+
+// newLinuxOnly is like newWithHost, for an errno that only Linux has.
+func newLinuxOnly(message string, linuxTranslation errno.Errno) *Error {
+	e := New(message, linuxTranslation)
+	addLinuxOnlyHostTranslation(linuxTranslation, e)
+	addLinuxTranslation(linuxTranslation, e)
+	return e
+}
+
+// maxLinuxErrno is one more than the largest Linux errno.
+const maxLinuxErrno = errno.EHWPOISON + 1
+
+// linuxTranslations maps a Linux errno to its Error.
+var linuxTranslations [maxLinuxErrno]*Error
+
+func addLinuxTranslation(linuxErrno errno.Errno, trans *Error) {
+	if linuxTranslations[linuxErrno] != nil {
+		panic(fmt.Sprintf("duplicate translation for Linux errno %d", linuxErrno))
+	}
+	linuxTranslations[linuxErrno] = trans
+}
+
+// fromLinux translates a Linux errno to its Error.
+func fromLinux(linuxErrno errno.Errno) *Error {
+	if linuxErrno >= maxLinuxErrno || linuxTranslations[linuxErrno] == nil {
+		panic(fmt.Sprintf("unknown Linux errno %d", linuxErrno))
+	}
+	return linuxTranslations[linuxErrno]
 }
 
 // String implements fmt.Stringer.String.
@@ -94,7 +124,7 @@ type linuxBackwardsTranslation struct {
 }
 
 // TODO(b/34162363): Remove this.
-var linuxBackwardsTranslations [maxErrno]linuxBackwardsTranslation
+var linuxBackwardsTranslations [maxLinuxErrno]linuxBackwardsTranslation
 
 // ToError translates an Error to a corresponding error value.
 //
@@ -275,7 +305,7 @@ func FromError(err error) *Error {
 		if linuxerr.IsRestartError(e) {
 			return ErrInterrupted
 		}
-		return FromHost(unix.Errno(e.Errno()))
+		return fromLinux(e.Errno())
 	case safecopy.SegvError, safecopy.BusError, safecopy.AlignmentError:
 		return FromHost(unix.EFAULT)
 	}
@@ -283,3 +313,58 @@ func FromError(err error) *Error {
 	msg := fmt.Sprintf("err: %s type: %T", err.Error(), err)
 	panic(msg)
 }
+
+// Errors for errnos that only Linux has. On other hosts, there is no host
+// errno for them.
+//
+// TODO(b/34162363): Remove or replace most of these errors.
+//
+// Some of the errors should be replaced with package specific errors and
+// others should be removed entirely.
+var (
+	ErrDeadlock                  = newLinuxOnly("resource deadlock would occur", errno.EDEADLOCK)
+	ErrChannelOutOfRange         = newLinuxOnly("channel number out of range", errno.ECHRNG)
+	ErrLevelTwoNotSynced         = newLinuxOnly("level 2 not synchronized", errno.EL2NSYNC)
+	ErrLevelThreeHalted          = newLinuxOnly("level 3 halted", errno.EL3HLT)
+	ErrLevelThreeReset           = newLinuxOnly("level 3 reset", errno.EL3RST)
+	ErrLinkNumberOutOfRange      = newLinuxOnly("link number out of range", errno.ELNRNG)
+	ErrProtocolDriverNotAttached = newLinuxOnly("protocol driver not attached", errno.EUNATCH)
+	ErrNoCSIAvailable            = newLinuxOnly("no CSI structure available", errno.ENOCSI)
+	ErrLevelTwoHalted            = newLinuxOnly("level 2 halted", errno.EL2HLT)
+	ErrInvalidExchange           = newLinuxOnly("invalid exchange", errno.EBADE)
+	ErrInvalidRequestDescriptor  = newLinuxOnly("invalid request descriptor", errno.EBADR)
+	ErrExchangeFull              = newLinuxOnly("exchange full", errno.EXFULL)
+	ErrNoAnode                   = newLinuxOnly("no anode", errno.ENOANO)
+	ErrInvalidRequestCode        = newLinuxOnly("invalid request code", errno.EBADRQC)
+	ErrInvalidSlot               = newLinuxOnly("invalid slot", errno.EBADSLT)
+	ErrBadFontFile               = newLinuxOnly("bad font file format", errno.EBFONT)
+	ErrMachineNotOnNetwork       = newLinuxOnly("machine is not on the network", errno.ENONET)
+	ErrPackageNotInstalled       = newLinuxOnly("package not installed", errno.ENOPKG)
+	ErrAdvertise                 = newLinuxOnly("advertise error", errno.EADV)
+	ErrSRMount                   = newLinuxOnly("srmount error", errno.ESRMNT)
+	ErrSendCommunication         = newLinuxOnly("communication error on send", errno.ECOMM)
+	ErrRFS                       = newLinuxOnly("RFS specific error", errno.EDOTDOT)
+	ErrNetworkNameNotUnique      = newLinuxOnly("name not unique on network", errno.ENOTUNIQ)
+	ErrFDInBadState              = newLinuxOnly("file descriptor in bad state", errno.EBADFD)
+	ErrRemoteAddressChanged      = newLinuxOnly("remote address changed", errno.EREMCHG)
+	ErrSharedLibraryInaccessible = newLinuxOnly("can not access a needed shared library", errno.ELIBACC)
+	ErrCorruptedSharedLibrary    = newLinuxOnly("accessing a corrupted shared library", errno.ELIBBAD)
+	ErrLibSectionCorrupted       = newLinuxOnly(".lib section in a.out corrupted", errno.ELIBSCN)
+	ErrTooManySharedLibraries    = newLinuxOnly("attempting to link in too many shared libraries", errno.ELIBMAX)
+	ErrSharedLibraryExeced       = newLinuxOnly("cannot exec a shared library directly", errno.ELIBEXEC)
+	ErrShouldRestart             = newLinuxOnly("interrupted system call should be restarted", errno.ERESTART)
+	ErrStreamPipe                = newLinuxOnly("streams pipe error", errno.ESTRPIPE)
+	ErrStructureNeedsCleaning    = newLinuxOnly("structure needs cleaning", errno.EUCLEAN)
+	ErrIsNotNamedFile            = newLinuxOnly("not a XENIX named type file", errno.ENOTNAM)
+	ErrNotAvailable              = newLinuxOnly("no XENIX semaphores available", errno.ENAVAIL)
+	ErrIsNamedFile               = newLinuxOnly("is a named type file", errno.EISNAM)
+	ErrRemoteIO                  = newLinuxOnly("remote I/O error", errno.EREMOTEIO)
+	ErrNoMedium                  = newLinuxOnly("no medium found", errno.ENOMEDIUM)
+	ErrWrongMediumType           = newLinuxOnly("wrong medium type", errno.EMEDIUMTYPE)
+	ErrNoKey                     = newLinuxOnly("required key not available", errno.ENOKEY)
+	ErrKeyExpired                = newLinuxOnly("key has expired", errno.EKEYEXPIRED)
+	ErrKeyRevoked                = newLinuxOnly("key has been revoked", errno.EKEYREVOKED)
+	ErrKeyRejected               = newLinuxOnly("key was rejected by service", errno.EKEYREJECTED)
+	ErrRFKill                    = newLinuxOnly("operation not possible due to RF-kill", errno.ERFKILL)
+	ErrHwPoison                  = newLinuxOnly("memory page has hardware error", errno.EHWPOISON)
+)
