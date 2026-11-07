@@ -18,8 +18,10 @@
 //	hvfboot -image root.erofs /bin/busybox echo hello
 //
 // The image must have blocks of at least 16 KiB and no inline file data
-// (mkfs.erofs -b 16384 -E noinline_data); make_busybox_image.sh makes one. The
-// binary signs a copy of itself with the hypervisor entitlement and runs it.
+// (mkfs.erofs -b 16384 -E noinline_data); make_image.sh makes one from a
+// container image. The root filesystem is read-only; /proc, /dev and a tmpfs
+// /tmp are mounted on it. The binary signs a copy of itself with the
+// hypervisor entitlement and runs it.
 package main
 
 import (
@@ -27,18 +29,24 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strings"
 
 	"golang.org/x/sys/unix"
 	"gvisor.dev/gvisor/pkg/abi/linux"
+	"gvisor.dev/gvisor/pkg/context"
 	"gvisor.dev/gvisor/pkg/cpuid"
 	"gvisor.dev/gvisor/pkg/fd"
+	"gvisor.dev/gvisor/pkg/fspath"
 	"gvisor.dev/gvisor/pkg/hvf/entitle"
 	"gvisor.dev/gvisor/pkg/log"
 	"gvisor.dev/gvisor/pkg/memutil"
+	"gvisor.dev/gvisor/pkg/sentry/devices/memdev"
 	"gvisor.dev/gvisor/pkg/sentry/fdimport"
 	"gvisor.dev/gvisor/pkg/sentry/fsimpl/cgroup2fs"
+	"gvisor.dev/gvisor/pkg/sentry/fsimpl/dev"
 	"gvisor.dev/gvisor/pkg/sentry/fsimpl/erofs"
 	"gvisor.dev/gvisor/pkg/sentry/fsimpl/host"
+	"gvisor.dev/gvisor/pkg/sentry/fsimpl/proc"
 	"gvisor.dev/gvisor/pkg/sentry/fsimpl/tmpfs"
 	"gvisor.dev/gvisor/pkg/sentry/kernel"
 	"gvisor.dev/gvisor/pkg/sentry/kernel/auth"
@@ -53,13 +61,35 @@ import (
 	"gvisor.dev/gvisor/pkg/sentry/vfs"
 )
 
+// envFlag is a repeatable KEY=VALUE flag.
+type envFlag []string
+
+func (e *envFlag) String() string { return strings.Join(*e, " ") }
+
+func (e *envFlag) Set(v string) error {
+	if !strings.Contains(v, "=") {
+		return fmt.Errorf("%q is not KEY=VALUE", v)
+	}
+	*e = append(*e, v)
+	return nil
+}
+
+// defaultEnv is the environment of the program, before -e.
+var defaultEnv = []string{
+	"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+	"HOME=/root",
+	"LANG=C.UTF-8",
+}
+
 var (
+	envv       envFlag
 	image      = flag.String("image", "", "EROFS image of the root filesystem")
 	debug      = flag.Bool("debug", false, "log at debug level")
 	straceFlag = flag.Bool("strace", false, "log system calls (implies -debug)")
 )
 
 func main() {
+	flag.Var(&envv, "e", "set KEY=VALUE in the environment of the program (repeatable)")
 	flag.Parse()
 	if *image == "" || flag.NArg() == 0 {
 		fmt.Fprintf(os.Stderr, "usage: hvfboot -image <root.erofs> <program> [args...]\n")
@@ -138,6 +168,11 @@ func run(imagePath string, argv []string) (int, error) {
 	vfsObj := k.VFS()
 	vfsObj.MustRegisterFilesystemType(erofs.Name, &erofs.FilesystemType{}, &vfs.RegisterFilesystemTypeOptions{})
 	vfsObj.MustRegisterFilesystemType(tmpfs.Name, &tmpfs.FilesystemType{}, &vfs.RegisterFilesystemTypeOptions{AllowUserMount: true})
+	vfsObj.MustRegisterFilesystemType(proc.Name, &proc.FilesystemType{}, &vfs.RegisterFilesystemTypeOptions{AllowUserMount: true})
+	vfsObj.MustRegisterFilesystemType(dev.Name, &dev.FilesystemType{}, &vfs.RegisterFilesystemTypeOptions{})
+	if err := memdev.Register(vfsObj); err != nil {
+		return 0, fmt.Errorf("registering memory devices: %w", err)
+	}
 
 	hostFS, err := host.NewFilesystem(vfsObj)
 	if err != nil {
@@ -160,6 +195,15 @@ func run(imagePath string, argv []string) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("mounting %s: %w", imagePath, err)
 	}
+	for _, m := range []struct{ target, fsType string }{
+		{"/proc", proc.Name},
+		{"/dev", dev.Name},
+		{"/tmp", tmpfs.Name},
+	} {
+		if err := mountAt(ctx, vfsObj, creds, mntns, m.target, m.fsType); err != nil {
+			return 0, err
+		}
+	}
 
 	fdTable := k.NewFDTable()
 	stdio := make(map[int]*fd.FD)
@@ -181,7 +225,7 @@ func run(imagePath string, argv []string) (int, error) {
 	tg, _, err := k.CreateProcess(kernel.CreateProcessArgs{
 		Filename:             argv[0],
 		Argv:                 argv,
-		Envv:                 []string{"PATH=/bin:/sbin:/usr/bin:/usr/sbin", "HOME=/"},
+		Envv:                 mergeEnv(defaultEnv, envv),
 		WorkingDirectory:     "/",
 		Credentials:          creds,
 		FDTable:              fdTable,
@@ -201,4 +245,38 @@ func run(imagePath string, argv []string) (int, error) {
 	}
 	k.WaitExited()
 	return int(tg.ExitStatus().ExitStatus()), nil
+}
+
+// mountAt mounts a new filesystem of type fsType at target in mntns. The target
+// directory must exist.
+func mountAt(ctx context.Context, vfsObj *vfs.VirtualFilesystem, creds *auth.Credentials, mntns *vfs.MountNamespace, target, fsType string) error {
+	root := mntns.Root(ctx)
+	defer root.DecRef(ctx)
+	pop := &vfs.PathOperation{Root: root, Start: root, Path: fspath.Parse(target)}
+	opts := &vfs.MountOptions{GetFilesystemOptions: vfs.GetFilesystemOptions{InternalMount: true}}
+	if _, err := vfsObj.MountAt(ctx, creds, fsType, pop, fsType, opts); err != nil {
+		return fmt.Errorf("mounting %s at %s: %w", fsType, target, err)
+	}
+	return nil
+}
+
+// mergeEnv returns base with the entries of override added; an entry of
+// override replaces the entry of base with the same key.
+func mergeEnv(base, override []string) []string {
+	env := append([]string(nil), base...)
+	for _, kv := range override {
+		key := kv[:strings.Index(kv, "=")+1]
+		replaced := false
+		for i, b := range env {
+			if strings.HasPrefix(b, key) {
+				env[i] = kv
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			env = append(env, kv)
+		}
+	}
+	return env
 }
