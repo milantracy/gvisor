@@ -8,11 +8,15 @@ package(
 go_library(
     name = "memutil",
     srcs = [
+        "memfd_darwin.go",
         "memfd_linux_unsafe.go",
         "memutil_unsafe.go",
         "mmap.go",
     ],
     importpath = "gvisor.dev/gvisor/pkg/memutil",
     visibility = ["//visibility:public"],
-    deps = ["@org_golang_x_sys//unix:go_default_library"],
+    deps = [
+        "//pkg/abi/linux",
+        "@org_golang_x_sys//unix:go_default_library",
+    ],
 )
