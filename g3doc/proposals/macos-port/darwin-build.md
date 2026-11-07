@@ -88,6 +88,30 @@ darwin support or a dependency cut:
 | `fsutil`, `sentry/hostfd` | `sentry/fsimpl/tmpfs` |
 | `//vdso` | `sentry/loader` → `loader/vdsodata` |
 
+## Progress
+
+Each package is checked with a native darwin build and test, and with a
+linux/arm64 cross-build whose tests run in a `debian:trixie` container.
+
+| Package | darwin build | darwin tests | linux/arm64 tests | Change |
+|---|---|---|---|---|
+| `//vdso` | ok | `check_vdso.py` ok | unchanged | clang, lld, `@linux_sysroot` |
+| `//pkg/fd` | ok | pass | pass | `O_LARGEFILE` per OS |
+| `//pkg/fdchannel` | ok | pass | pass | `SOCK_DGRAM` and one iovec on darwin |
+| `//pkg/sentry/hostfd` | ok | blocked by `safecopy` | pass | libSystem read/write wrappers on darwin |
+| `//pkg/aio` | ok | pass | pass | libSystem wrappers; no `LinuxQueue` on darwin |
+| `//pkg/p9` | ok | pass | pass | `abi/linux` fallocate constants |
+
+Found on the way:
+
+-   `//pkg/safecopy` builds on darwin, but its `init` panics: darwin
+    `sighandling.ReplaceSignalHandler` returns "not supported". Every binary
+    that imports `safemem` or `safecopy` fails at startup. This needs a
+    SIGSEGV/SIGBUS handler for the darwin arm64 signal frame; it is a port,
+    not a leaf fix.
+-   Tests print "host page size mismatch - running on non-4K host", because
+    `hostarch` uses the 4K variant on a 16K host.
+
 ## vDSO
 
 The vDSO is a `-nostdlib` Linux ELF, built for both arm64 and amd64 by a
