@@ -98,17 +98,54 @@ linux/arm64 cross-build whose tests run in a `debian:trixie` container.
 | `//vdso` | ok | `check_vdso.py` ok | unchanged | clang, lld, `@linux_sysroot` |
 | `//pkg/fd` | ok | pass | pass | `O_LARGEFILE` per OS |
 | `//pkg/fdchannel` | ok | pass | pass | `SOCK_DGRAM` and one iovec on darwin |
-| `//pkg/sentry/hostfd` | ok | blocked by `safecopy` | pass | libSystem read/write wrappers on darwin |
+| `//pkg/sentry/hostfd` | ok | pass | pass | libSystem read/write wrappers on darwin |
 | `//pkg/aio` | ok | pass | pass | libSystem wrappers; no `LinuxQueue` on darwin |
 | `//pkg/p9` | ok | pass | pass | `abi/linux` fallocate constants |
 | `//pkg/seccomp` | ok | Linux-only test | pass | Filter install returns `ENOSYS` on darwin |
 | `//pkg/pinring` | ok | Linux-only test | pass | io_uring calls return `ENOSYS` on darwin |
-| `//pkg/eventfd` | ok | blocked by `safecopy` | pass | Non-blocking pipe on darwin; `Read` returns the sum |
-| `//pkg/unet` | ok | blocked by `safecopy` | pass | Per-OS socket creation, `poll`, `SO_NOSIGPIPE`; no `SOCK_SEQPACKET` on darwin |
+| `//pkg/eventfd` | ok | pass | pass | Non-blocking pipe on darwin; `Read` returns the sum |
+| `//pkg/unet` | ok | pass (4 skipped) | pass | Per-OS socket creation, `poll`, `SO_NOSIGPIPE`; no `SOCK_SEQPACKET` on darwin |
 | `//pkg/fsutil` | ok | no tests | builds | darwin directory listing; gofer-only wrappers stay Linux-only |
 | `//pkg/memutil` | ok | no tests | builds | `CreateMemFD` is an unlinked APFS temp file on darwin |
 | `//pkg/flipcall` | ok | Linux-only test | pass | Peer wait and wake return `ENOSYS` on darwin until `os_sync_wait_on_address` is bound |
 | `//pkg/sentry/usage` | ok | no tests | builds | Fixed by `memutil` |
+| `//pkg/sighandling` | ok | no tests | builds | libSystem `sigaction` through a cgo-free trampoline |
+| `//pkg/safecopy` | ok | pass | pass | darwin arm64 signal handler |
+
+### Second pass over the demo path (2026-11-06)
+
+With the packages above fixed, the same 12 targets still build 1 of 12. The
+next failures:
+
+| Package | First errors |
+|---|---|
+| `//pkg/sentry/hostmm` | `SYS_MEMBARRIER` |
+| `//pkg/sentry/socket/unix/transport` | `pkg/fdnotifier` has no darwin files (epoll); `SO_DOMAIN`, `SO_PASSCRED` |
+| `//pkg/lisafs` | `STATX_*`, `POLLRDHUP`, `Ppoll`, `EREMOTEIO` |
+| `//pkg/sentry/state/stateio` | `O_DIRECT` |
+
+### darwin host behavior found on the way
+
+These differ from Linux and matter beyond the build:
+
+-   **`PROT_NONE` access raises SIGBUS**, with the same `si_code` (1) as an
+    access past the end of a mapped file, so `safecopy` returns `BusError`
+    where Linux gives `SegvError`. An access to unmapped memory raises
+    SIGSEGV.
+-   **Signals sent by a process have positive `si_code`** (`SI_USER` is
+    `0x10001`). A signal handler that checks "from the kernel" must use
+    `0 < si_code < 0x10000`.
+-   **`SCM_RIGHTS` truncation leaks descriptors.** If the passed descriptors do
+    not fit in the receiver's control buffer, XNU still installs all of them
+    in the receiver, sets `MSG_CTRUNC` and leaves `cmsg_len` at the full
+    length. Linux closes the ones that do not fit. A darwin gofer protocol
+    must always receive with room for every descriptor the peer can send.
+-   **No `AF_UNIX` `SOCK_SEQPACKET`**, no `SOCK_CLOEXEC`, no `MSG_NOSIGNAL`.
+-   **`sendmsg` and `recvmsg` need at least one iovec** (`EMSGSIZE`
+    otherwise), and `recvmsg` returns 0 at once if the iovecs have no space.
+-   **`sun_path` is 104 bytes** (108 on Linux).
+-   Tests print "host page size mismatch - running on non-4K host", because
+    `hostarch` uses the 4K variant on a 16K host.
 
 ### Second pass over the demo path (2026-11-06)
 

@@ -63,8 +63,8 @@ The darwin build is in progress on `macos-port/darwin-shims` (`darwin-build.md`
 has the host setup and the list of failing packages). Native Bazel works on the
 Mac. The first layer of leaf packages is done (see the progress table in
 `darwin-build.md`). Next: the second layer (`hostmm`, `fdnotifier` and
-`socket/unix/transport`, `lisafs`, `stateio`), and a darwin signal handler for
-`safecopy`, which blocks running most tests on darwin.
+`socket/unix/transport`, `lisafs`, `stateio`). `safecopy` has a darwin signal
+handler, so package tests run on darwin.
 
 ## Phase 0 probe plan (done)
 
