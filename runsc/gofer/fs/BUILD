@@ -8,7 +8,11 @@ package(
 go_library(
     name = "fs",
     srcs = [
+        "libc_darwin_arm64.s",
+        "libc_darwin_unsafe.go",
         "lisafs.go",
+        "lisafs_darwin.go",
+        "lisafs_linux.go",
     ],
     visibility = ["//runsc:__subpackages__"],
     deps = [
