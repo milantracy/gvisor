@@ -11,6 +11,8 @@ go_library(
         "cgroup.go",
         "hostmm.go",
         "membarrier.go",
+        "membarrier_darwin.go",
+        "membarrier_linux.go",
     ],
     importpath = "gvisor.dev/gvisor/pkg/sentry/hostmm",
     visibility = ["//pkg/sentry:internal"],
