@@ -22,20 +22,20 @@ Status values:
 |---|---|---|---|
 | Launcher | `runsc` (OCI runtime) creates the sandbox and the gofer, and passes FDs to them (`runsc/container/container.go`, `runsc/sandbox/sandbox.go`) | `hvfboot` (`runsc/hvfboot`), a launcher for one program, not an OCI runtime | Done (launcher); OCI is Later |
 | Sentry process | `runsc boot`, one per sandbox | `hvfboot`, one per run | Done |
-| Gofer process | `runsc gofer`, one per container, serves all its mounts (`container.go`: "One gofer process serves all of a container's mounts") | `hvfboot gofer`, one per run, serves all host mounts | Planned (step 1) |
+| Gofer process | `runsc gofer`, one per container, serves all its mounts (`container.go`: "One gofer process serves all of a container's mounts") | `hvfboot gofer`, one per run, serves all host mounts | Done |
 | Application isolation from the Sentry | Platform: systrap, ptrace or KVM | `hvf` platform on Hypervisor.framework; the application runs at EL0 in a VM, the Sentry on the host | Done |
 
 ## File systems
 
 | Layer | runsc on Linux | macOS port | Status |
 |---|---|---|---|
-| Sentry-to-gofer connection | One `SOCK_STREAM` socket pair per lisafs mount (`createLisafsSocketPair`); the gofer gets `--io-fds`, the sandbox the other ends | The same | Planned (step 1) |
-| Mount order | `--gofer-mount-confs` and `--io-fds`: root first, then the spec mounts in order | The same order: root (if served by the gofer), then each `-v` mount | Planned (step 1) |
-| lisafs server | `runsc/gofer/fs` (`lisafs.go`); `Gofer.serve` makes one `lisafs.Server` and one connection per io FD | The same package; darwin host calls in `lisafs_darwin.go` | Done (server); Planned (process) |
+| Sentry-to-gofer connection | One `SOCK_STREAM` socket pair per lisafs mount (`createLisafsSocketPair`); the gofer gets `--io-fds`, the sandbox the other ends | The same | Done |
+| Mount order | `--gofer-mount-confs` and `--io-fds`: root first, then the spec mounts in order | The same order: root (if served by the gofer), then each `-v` mount | Done |
+| lisafs server | `runsc/gofer/fs` (`lisafs.go`); `Gofer.serve` makes one `lisafs.Server` and one connection per io FD | The same package; darwin host calls in `lisafs_darwin.go` | Done |
 | lisafs wire format | Linux flags and Linux errnos | The same; the darwin server translates flags and errnos | Done |
 | Host file access from the Sentry | directfs: the gofer donates host FDs and the Sentry makes file system calls on them | lisafs only; directfs uses `O_PATH`, `statx`, `AT_EMPTY_PATH` and fails with `EINVAL` if asked for | Done (lisafs only) |
 | Root file system | Gofer-served rootfs with an overlay, or an EROFS image opened by the Sentry (no gofer for `/`) | EROFS image opened by the Sentry | Done (EROFS); gofer-served root is Later |
-| Bind mounts | Spec mounts, served by the gofer | `-v host:guest`, served by the gofer | Planned (step 1) |
+| Bind mounts | Spec mounts, served by the gofer | `-v host:guest[:ro]`, served by the gofer, with the same mount options as a shared `runsc` mount | Done |
 | `/dev` | devtmpfs in the Sentry, optional `/dev` gofer (`--dev-io-fd`) | devtmpfs and memory devices in the Sentry; no `/dev` gofer | Done (devtmpfs) |
 
 ## Confinement of the Sentry
@@ -46,6 +46,7 @@ Status values:
 | System call filter | seccomp-bpf (`runsc/boot/filter`, installed in `loader.go`) | No seccomp. The Seatbelt profile denies process exec, network and IPC; it filters by operation and path, not by system call | Planned (step 3) |
 | Namespaces | New IPC, mount, UTS, PID and (if asked) network and user namespaces (`sandbox.go`, the `nss` list) | No namespaces on macOS. Seatbelt covers file, network, IPC and exec access | No equivalent |
 | User | Optional user namespace with UID/GID mappings; can run as nobody | Runs as the calling user. A separate user needs root to set up | Later |
+| Sandbox IDs on host files | Rootless: the user namespace maps sandbox root to the user; other IDs are unmapped | The darwin gofer does the same mapping itself (`MapRootToEffectiveIDs`): 0 is the user, other host IDs are 65534, `chown` to other IDs fails | Done |
 | Capabilities | Dropped to a minimal set | macOS has no capabilities | No equivalent |
 | Resource limits | cgroups (CPU, memory, PIDs) | No cgroups. `setrlimit` only, per process | Later |
 
@@ -54,10 +55,10 @@ Status values:
 | Layer | runsc on Linux | macOS port | Status |
 |---|---|---|---|
 | File system view | New mount namespace; the rootfs and each mount source are bind-mounted under a tmpfs at `/proc/fs`, then `chroot("/root")` (`runsc/cmd/sandboxsetup/gofer_mount.go`, `runsc/cmd/gofer.go`) | A Seatbelt profile allows file access only under the real path (`subpath`) of each mount source, read-only for read-only mounts | Planned (step 2) |
-| Symlinks in served paths | `openat2(RESOLVE_NO_SYMLINKS)` for parents; `O_NOFOLLOW` per component | `O_NOFOLLOW_ANY` for parents and reopen; `O_NOFOLLOW` or `O_SYMLINK` per component; mount sources go through `realpath` | Done (server); Planned (`realpath` in launcher) |
+| Symlinks in served paths | `openat2(RESOLVE_NO_SYMLINKS)` for parents; `O_NOFOLLOW` per component | `O_NOFOLLOW_ANY` for parents and reopen; `O_NOFOLLOW` or `O_SYMLINK` per component; mount sources go through `realpath` | Done |
 | System call filter | seccomp-bpf (`runsc/gofer/filter`) | The Seatbelt profile denies process exec, network (except host Unix sockets if allowed) and IPC | Planned (step 2) |
 | Capabilities | Dropped (`--apply-caps`) | No capabilities | No equivalent |
-| FD limit | `RLIMIT_NOFILE` from `--fdlimit` | `setrlimit`, the same | Planned (step 1) |
+| FD limit | `RLIMIT_NOFILE` from `--fdlimit` | `setrlimit`, the same (`-fdlimit`) | Done |
 | Supplementary groups | Dropped, or set per thread for host socket connections | Not changed; connecting to a host socket as another user is not supported (darwin has no per-thread credentials) | No equivalent |
 
 ## Networking
@@ -85,9 +86,9 @@ Status values:
 
 ## Order of work
 
-1.  `hvfboot gofer` and `hvfboot -v host:guest`: one gofer process, one
-    socket pair per mount in mount order, `realpath` of mount sources, FD
-    limit.
+1.  Done: `hvfboot gofer` and `hvfboot -v host:guest`: one gofer process,
+    one socket pair per mount in mount order, `realpath` of mount sources,
+    FD limit.
 2.  Seatbelt profile for the gofer.
 3.  Seatbelt profile for the Sentry, in place of `pivot_root`.
 

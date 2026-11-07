@@ -108,9 +108,12 @@ Sentry's gofer client builds on darwin with lisafs only (no directfs); see
 "Gofer" in `darwin-build.md`. The port follows the `runsc` process model: one
 gofer process serves all host mounts, and Seatbelt profiles replace the
 `pivot_root`, `chroot`, namespaces and seccomp of `runsc`
-(`runsc-comparison.md`). Next: `hvfboot gofer` and `hvfboot -v`, the
-gofer's Seatbelt profile, the Sentry's Seatbelt profile, Python on host
-files, then networking. Lazy FP state
+(`runsc-comparison.md`). `hvfboot -v host:guest[:ro]` works: one
+`hvfboot gofer` process serves all host mounts, and Python reads and writes
+host files through it ("Host mounts" in `darwin-build.md`). The gofer maps
+the sandbox root to the user, as the user namespace of rootless `runsc`
+does. Next: the gofer's Seatbelt profile, the Sentry's Seatbelt profile,
+then networking. Lazy FP state
 and EL0 ID-register `MRS` emulation (low priority: the KVM platform does not
 emulate it either) are deferred.
 

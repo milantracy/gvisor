@@ -446,7 +446,8 @@ including the re-exec and signing.
 
 `make_image.sh <out.erofs> <image>` makes an hvfboot image from any
 linux/arm64 container image. `hvfboot` mounts `/proc`, `/dev` (memory
-devices) and a tmpfs `/tmp` on the read-only root, and takes `-e KEY=VALUE`.
+devices) and a tmpfs `/tmp` on the read-only root, and takes `-e KEY=VALUE`
+and `-v host:guest[:ro]` (see "Host mounts").
 procfs adds the nvproxy files only on Linux.
 
 ```
@@ -562,11 +563,52 @@ the server uses too.
 Result (2026-11-07): the client builds on darwin and Linux, and
 `//pkg/sentry/fsimpl/gofer:gofer_test` passes on darwin.
 
-Next: an `hvfboot gofer` process that serves all host mounts, as
-`runsc gofer` does (one socket pair per mount, root first, then mounts in
-order), and `hvfboot -v <host dir>:<guest dir>`; then Seatbelt profiles for
-the gofer and the Sentry. `runsc-comparison.md` compares each layer with
-`runsc`.
+### Host mounts (`hvfboot -v`)
+
+`hvfboot -v host:guest[:ro]` (repeatable) mounts a host file or directory.
+As with `runsc gofer`, one gofer process (`hvfboot gofer`, the same binary)
+serves all host mounts:
+
+-   One `SOCK_STREAM` socket pair per mount, in mount order. The gofer gets
+    its ends as `-io-fds` and the host paths as `-mount ro:<path>` or
+    `rw:<path>` in the same order.
+-   The Sentry mounts each FD with the gofer file system: `trans=fd`,
+    `rfdno`, `wfdno`, `cache=remote_revalidating`, `disable_fifo_open`, as
+    `goferMountData` in `runsc/boot/vfs.go` does for a shared mount. The
+    client owns that FD, so `hvfboot` gives it a duplicate.
+-   Mount sources go through `realpath`: the darwin gofer allows no symlinks
+    in a path that it opens again (`O_NOFOLLOW_ANY`).
+-   `-fdlimit` sets `RLIMIT_NOFILE` of the gofer.
+-   The gofer exits when the Sentry closes its connections.
+-   The root file system is read-only, so a guest path must exist or be in
+    a writable directory such as `/tmp`.
+
+```
+hvfboot -image python.erofs -v $HOME/src:/tmp/src:ro /usr/local/bin/python3 /tmp/src/main.py
+```
+
+IDs: the Sentry runs the program as root, and the gofer runs as the user.
+darwin has no user namespaces, so `hvfboot gofer` calls
+`fs.MapRootToEffectiveIDs`. The gofer then maps IDs as the user namespace of
+rootless `runsc` does: sandbox UID/GID 0 is the gofer's EUID/EGID, other host
+IDs show as 65534, and `chown` to other IDs fails with `EINVAL`. Without the
+call (the lisafs test suite), sandbox IDs are host IDs.
+
+With `cache=remote_revalidating`, the Sentry ignores a `SetStat` attribute
+that the gofer could not set (`dentry.setStat` in
+`pkg/sentry/fsimpl/gofer/gofer.go` returns before it checks `failureErr`). So
+`chown` to an unmapped ID returns success in the sandbox and changes nothing.
+Linux has the same code.
+
+Result (2026-11-07, Python 3.13, rw and ro mounts of the same directory):
+read, write, `mkdir`, `rename`, `symlink`, `readlink`, `unlink`, `rmdir`,
+`stat` (owner 0:0), `EROFS` on the read-only mount, and a single-file mount
+pass. No gofer process is left after the run. `python3 -c pass` takes 22 ms
+without a mount and 31 ms with one; the gofer process start is most of the
+difference.
+
+Next: Seatbelt profiles for the gofer and the Sentry. `runsc-comparison.md`
+compares each layer with `runsc`.
 
 ## vDSO
 
