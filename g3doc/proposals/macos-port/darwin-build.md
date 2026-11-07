@@ -410,6 +410,37 @@ and `sh -c '/bin/uname -m | /bin/cat; echo st=$?'` give the correct output
 and exit status. 20 runs of the pipeline pass, at about 0.37 s each,
 including the re-exec and signing.
 
+## Python
+
+`make_image.sh <out.erofs> <image>` makes an hvfboot image from any
+linux/arm64 container image. `hvfboot` mounts `/proc`, `/dev` (memory
+devices) and a tmpfs `/tmp` on the read-only root, and takes `-e KEY=VALUE`.
+procfs adds the nvproxy files only on Linux.
+
+```
+runsc/hvfboot/make_image.sh python.erofs python:3.13-slim
+hvfboot -image python.erofs /usr/local/bin/python3 - < script.py
+```
+
+Result (2026-11-07, `python:3.13-slim`, Python 3.13, glibc 2.41): a smoke
+test passes 14 of 14 checks: stdlib imports (including `ssl`, `ctypes`,
+`sqlite3`), hashing, `os.urandom`, tempfiles in `/tmp`, 8 threads,
+`subprocess` (fork and exec), `asyncio` over a Unix socket, `sqlite3`,
+`setitimer` signals, `mmap`, `ctypes` calls into libc, `multiprocessing.Pool`,
+and `decimal`. Most checks take the same time as in Docker on the same Mac;
+`multiprocessing` takes 78 ms against 51 ms.
+
+| Startup | Time per run |
+|---|---|
+| `python3 -c pass` in a Docker container (no container start) | 6 ms |
+| `python3 -c pass` in hvfboot, binary signed in advance | 28 ms |
+| `hvfboot /bin/true`, sign and re-exec on each run | 366 ms |
+| `hvfboot python3 -c pass`, sign and re-exec on each run | 387 ms |
+| `docker run python:3.13-slim python3 -c pass` | 193 ms |
+
+`python3 -c pass` makes 428 system calls. Signing a copy of the binary and
+starting it again costs about 330 ms of every run.
+
 ## vDSO
 
 The vDSO is a `-nostdlib` Linux ELF, built for both arm64 and amd64 by a

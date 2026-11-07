@@ -92,7 +92,12 @@ Debian's static busybox from an EROFS image with 16 KiB blocks: `echo
 hello`, `dmesg`, and `sh -c` with fork, exec, pipes and exit statuses
 (checkpoints 3 and 4, the Phase 1 exit criterion, 2026-11-07).
 
-Short-term goal (2026-11-07): run a Python program. Next: the correctness
+Short-term goal (2026-11-07): run a Python program. Reached the same day:
+`python:3.13-slim` from an EROFS image passes a 14-check stdlib smoke test
+(threads, subprocess, asyncio, sqlite3, multiprocessing; see
+`darwin-build.md`). Startup is 387 ms, of which about 330 ms is signing and
+re-executing `hvfboot` on every run. Next: sign once instead of on every run,
+the correctness
 gaps (EL0 ID-register `MRS` emulation, page-table release and recycle),
 system call cost (13.7 µs through `Switch`), then Phase 2 (darwin gofer,
 networking, Seatbelt).
