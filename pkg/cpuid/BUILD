@@ -36,6 +36,7 @@ go_test(
     srcs = [
         "cpuid_amd64_test.go",
         "cpuid_test.go",
+        "host_darwin_arm64_test.go",
     ],
     embed = [":cpuid"],
     # NOTE: It seems that bazel code generation does not properly parse tags

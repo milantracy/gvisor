@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"math/rand"
 	"os"
+	"runtime"
 	"testing"
 )
 
@@ -58,6 +59,9 @@ func TestAllFeaturesBitmask(t *testing.T) {
 }
 
 func TestReadHwCap(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the auxiliary vector is read only on Linux")
+	}
 	// Make an auxv with fake entries
 	const (
 		auxvEntries = 16
@@ -105,6 +109,9 @@ func TestReadHwCap(t *testing.T) {
 }
 
 func TestReadingSelfProcAuxv(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the auxiliary vector is read only on Linux")
+	}
 	_, err := readHWCap("/proc/self/auxv")
 	if err != nil {
 		t.Errorf("got %v, expected nil", err)
