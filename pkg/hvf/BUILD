@@ -7,6 +7,7 @@ licenses(["notice"])
 go_library(
     name = "hvf",
     srcs = [
+        "batch_darwin_arm64_unsafe.go",
         "hvf.go",
         "hvf_darwin_arm64.go",
         "hvf_darwin_arm64.s",

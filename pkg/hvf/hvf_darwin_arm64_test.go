@@ -252,3 +252,104 @@ func BenchmarkSIMDFPReg(b *testing.B) {
 		}
 	}
 }
+
+// TestBatch writes and reads registers in batches, and checks the values
+// against single register calls.
+func TestBatch(t *testing.T) {
+	v := newGuest(t, insnBSelf)
+	b := v.NewBatch()
+	var q [32][16]byte
+	for i := range q {
+		for j := range q[i] {
+			q[i][j] = byte(i*16 + j)
+		}
+	}
+	for i := 0; i < 31; i++ {
+		b.SetReg(RegX0+Reg(i), 0x1000+uint64(i))
+	}
+	b.SetSysReg(SysRegSPEL0, 0x5000)
+	for i := range q {
+		b.SetSIMDFPReg(i, &q[i])
+	}
+	if err := b.Do(); err != nil {
+		t.Fatalf("Do (writes): %v", err)
+	}
+	for i := 0; i < 31; i++ {
+		if got, err := v.Reg(RegX0 + Reg(i)); err != nil || got != 0x1000+uint64(i) {
+			t.Errorf("X%d = %#x, %v; want %#x", i, got, err, 0x1000+i)
+		}
+	}
+	if got, err := v.SIMDFPReg(31); err != nil || got != q[31] {
+		t.Errorf("Q31 = %x, %v; want %x", got, err, q[31])
+	}
+
+	b.Reset()
+	var x [31]uint64
+	var sp uint64
+	var gotQ [32][16]byte
+	for i := range x {
+		b.Reg(RegX0+Reg(i), &x[i])
+	}
+	b.SysReg(SysRegSPEL0, &sp)
+	for i := range gotQ {
+		b.SIMDFPReg(i, &gotQ[i])
+	}
+	if err := b.Do(); err != nil {
+		t.Fatalf("Do (reads): %v", err)
+	}
+	for i := range x {
+		if x[i] != 0x1000+uint64(i) {
+			t.Errorf("batch X%d = %#x, want %#x", i, x[i], 0x1000+i)
+		}
+	}
+	if sp != 0x5000 {
+		t.Errorf("batch SP_EL0 = %#x, want 0x5000", sp)
+	}
+	if gotQ != q {
+		t.Errorf("batch Q0-Q31 = %x, want %x", gotQ, q)
+	}
+}
+
+// TestBatchError checks that Do stops at the first operation that fails.
+func TestBatchError(t *testing.T) {
+	v := newGuest(t, insnBSelf)
+	b := v.NewBatch()
+	b.SetReg(RegX0, 1)
+	b.SetReg(Reg(0xffff), 2)
+	b.SetReg(RegX0+1, 3)
+	if err := b.Do(); err == nil {
+		t.Fatalf("Do succeeded with an invalid register, want an error")
+	}
+	if got, _ := v.Reg(RegX0); got != 1 {
+		t.Errorf("X0 = %d, want 1", got)
+	}
+	if got, _ := v.Reg(RegX0 + 1); got == 3 {
+		t.Errorf("X1 = 3, want the write after the failed operation not made")
+	}
+}
+
+// BenchmarkBatchSave measures one batch that reads the application state:
+// X0-X30, SP_EL0, TPIDR_EL0, FPSR, FPCR and Q0-Q31.
+func BenchmarkBatchSave(b *testing.B) {
+	v := newGuest(b, insnBSelf)
+	batch := v.NewBatch()
+	var x [31]uint64
+	var sp, tpidr, fpsr, fpcr uint64
+	var q [32][16]byte
+	for b.Loop() {
+		batch.Reset()
+		for i := range x {
+			batch.Reg(RegX0+Reg(i), &x[i])
+		}
+		batch.SysReg(SysRegSPEL0, &sp)
+		batch.SysReg(SysRegTPIDREL0, &tpidr)
+		batch.Reg(RegFPSR, &fpsr)
+		batch.Reg(RegFPCR, &fpcr)
+		for i := range q {
+			batch.SIMDFPReg(i, &q[i])
+		}
+		if err := batch.Do(); err != nil {
+			b.Fatalf("Do: %v", err)
+		}
+	}
+}

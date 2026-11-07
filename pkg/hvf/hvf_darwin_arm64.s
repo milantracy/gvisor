@@ -121,3 +121,34 @@ TEXT setSIMDFPRegShim<>(SB),NOSPLIT,$0-0
 	JMP	libc_hv_vcpu_set_simd_fp_reg(SB)
 GLOBL	·setSIMDFPRegShimAddr(SB), RODATA, $8
 DATA	·setSIMDFPRegShimAddr(SB)/8, $setSIMDFPRegShim<>(SB)
+
+// batchShim(ops *batchOp, n uint64) makes the call of each of the n
+// operations at ops in order, and stops at the first call that does not
+// return HV_SUCCESS. It returns the result of the last call that it made, or
+// HV_SUCCESS if n is 0. It uses the C calling convention, and saves R19 and
+// R20 (callee-saved) for the loop state.
+TEXT batchShim<>(SB),NOSPLIT|NOFRAME,$0-0
+	STP.W	(R29, R30), -32(RSP)
+	STP	(R19, R20), 16(RSP)
+	MOVD	R0, R19
+	MOVD	R1, R20
+	MOVD	$0, R0
+batchLoop:
+	CBZ	R20, batchDone
+	MOVD	0(R19), R9
+	MOVD	8(R19), R0
+	MOVD	16(R19), R1
+	MOVD	24(R19), R2
+	MOVD	32(R19), R3
+	ORR	R3, R2, R2
+	CALL	(R9)
+	CBNZW	R0, batchDone
+	ADD	$40, R19
+	SUB	$1, R20
+	B	batchLoop
+batchDone:
+	LDP	16(RSP), (R19, R20)
+	LDP.P	32(RSP), (R29, R30)
+	RET
+GLOBL	·batchShimAddr(SB), RODATA, $8
+DATA	·batchShimAddr(SB)/8, $batchShim<>(SB)
