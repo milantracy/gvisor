@@ -14,6 +14,8 @@ go_library(
         "features_amd64.go",
         "features_arm64.go",
         "hwcap_amd64.go",
+        "host_darwin_arm64.go",
+        "host_linux_arm64.go",
         "hwcap_arm64.go",
         "native_amd64.go",
         "native_amd64.s",
@@ -24,6 +26,7 @@ go_library(
     deps = [
         "//pkg/log",
         "//pkg/sync",
+        "@org_golang_x_sys//unix:go_default_library",
     ],
 )
 
