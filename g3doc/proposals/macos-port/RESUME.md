@@ -99,9 +99,15 @@ Short-term goal (2026-11-07): run a Python program. Reached the same day:
 starts in 22 ms (`docker run`: 193 ms). Page tables are released and
 recycled safely. A system call through `Switch` costs 2.39 µs (13.6 µs
 before the spin-then-wait hand-off and batched register calls; see
-`darwin-build.md`). Next: lazy FP state, EL0 ID-register `MRS` emulation
-(low priority: the KVM platform does not emulate it either), then Phase 2
-(darwin gofer, networking, Seatbelt).
+`darwin-build.md`).
+
+Phase 2 started on 2026-11-07 with the gofer. The lisafs server
+(`runsc/gofer/fs`) runs on darwin and passes the lisafs test suite, and the
+Sentry's gofer client builds on darwin with lisafs only (no directfs); see
+"Gofer" in `darwin-build.md`. Next: `hvfboot -v` with a separate gofer
+process, Python on host files, then networking and Seatbelt. Lazy FP state
+and EL0 ID-register `MRS` emulation (low priority: the KVM platform does not
+emulate it either) are deferred.
 
 ## Phase 0 probe plan (done)
 

@@ -493,6 +493,77 @@ bazelisk build //runsc/hvfboot
 `bazel-bin` points to the configuration of the last build, so after a Linux
 cross-build it has no `hvfboot`; `cquery --output=files` gives the path.
 
+## Gofer (Phase 2)
+
+Phase 2 starts with host files through a gofer: a separate process that
+serves a host directory to the Sentry over lisafs. `pkg/lisafs`,
+`pkg/flipcall` (on `os_sync_wait_on_address`) and `pkg/fdchannel` already
+build on darwin.
+
+The lisafs protocol carries Linux flags: the server keeps only
+`linux.O_ACCMODE | linux.O_TRUNC` of the open flags, and unlink, rename and
+xattr flags are Linux values. The Sentry sent `unix.O_TRUNC`, which equals
+`linux.O_TRUNC` only on Linux; it now sends `linux.O_TRUNC`. Errnos on the
+wire are host errnos; the Sentry and the gofer are both darwin processes,
+and the Sentry converts them with `linuxerr.HostToLinux`.
+
+### Server (`runsc/gofer/fs`)
+
+The Linux-only parts of `lisafs.go` moved unchanged to `lisafs_linux.go`,
+behind small helpers; `lisafs_darwin.go` has the darwin versions. Probe
+results on macOS 26.6.2 that set the design:
+
+| Need | Linux | darwin |
+|---|---|---|
+| Control FD that does not read the file | `O_PATH` | `O_EVTONLY` (still needs read permission) |
+| Control FD of a symlink | `O_PATH\|O_NOFOLLOW` | `O_EVTONLY\|O_SYMLINK`, without `O_NOFOLLOW` (with it: `ELOOP`) |
+| Control FD of a FIFO, without blocking | `O_RDONLY\|O_NONBLOCK` | the same |
+| Control FD of a socket | `O_PATH` | none: `open(2)` fails with `EOPNOTSUPP` |
+| Open again with other flags | `/proc/self/fd/N` | the path with `O_NOFOLLOW_ANY`, then check device and inode (`/dev/fd/N` only duplicates) |
+| Parent directory without symlinks | `openat2(RESOLVE_NO_SYMLINKS)` | `open(O_NOFOLLOW_ANY)` |
+| stat, chown, utimes, readlink on an FD | `statx`, `fchownat`, `utimensat` and `readlinkat` with an empty path | `fstat`, `fchown`, `futimens`, `freadlink` (libSystem trampolines for the last two) |
+| rename flags | `renameat2` | `renameatx_np` (`RENAME_EXCL`, `RENAME_SWAP`) |
+| fallocate | `fallocate` | `F_PREALLOCATE` and `ftruncate`, mode 0 only |
+| Directory entries | `getdents64` | `getdirentries` (x/sys emulation on `readdir`) |
+
+`O_NOFOLLOW_ANY` rejects any symlink in the path, also above the mount
+point, so a mount source must be a real path (`/private/tmp`, not `/tmp`).
+The server holds the rename lock for reading in every operation that opens
+a file again, so the path does not change.
+
+Not supported on darwin:
+
+-   Files that the gofer user cannot read (mode 000): no control FD.
+-   Unix sockets in a host directory: the server cannot walk to them.
+-   Open and set-attribute on deleted files (`OpenOnDeleted` and
+    `SetAttrOnDeleted` are false): a deleted file has no path to open again.
+-   Connecting to a host socket as another user: darwin has no per-thread
+    credentials.
+-   Overlay whiteouts (`mknod` of a 0:0 character device needs root).
+
+Result (2026-11-07): the lisafs test suite (`//runsc/gofer/fs:lisafs_test`)
+passes on darwin, and on Linux arm64 in Docker. `groups_test` is
+Linux-only.
+
+### Client (`pkg/sentry/fsimpl/gofer`)
+
+directfs makes Linux file system calls from the Sentry (`O_PATH`, `statx`,
+`AT_EMPTY_PATH`), so `directfs_inode.go` is Linux-only. On darwin the client
+uses lisafs for every operation, and the `directfs` mount option fails with
+`EINVAL`. `directfs_inode_darwin.go` has a `directfsInode` whose methods
+panic; no value of it exists, it only completes the type switches in
+`inode_impl.go`. Other darwin changes: `dup2` for `dup3`, `fsync` for
+`fdatasync`, `fstat` for `statx`. The host named pipe writer check needs
+`tee(2)` and fails with `EOPNOTSUPP` (host FIFOs are off by default).
+`pkg/fsutil` has `Fallocate`, `RenameAt` and `RenameAt2` for darwin, which
+the server uses too.
+
+Result (2026-11-07): the client builds on darwin and Linux, and
+`//pkg/sentry/fsimpl/gofer:gofer_test` passes on darwin.
+
+Next: `hvfboot -v <host dir>:<guest dir>` with a gofer process, then Python
+reading and writing host files.
+
 ## vDSO
 
 The vDSO is a `-nostdlib` Linux ELF, built for both arm64 and amd64 by a
