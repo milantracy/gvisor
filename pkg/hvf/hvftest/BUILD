@@ -10,4 +10,5 @@ go_library(
     srcs = ["hvftest.go"],
     importpath = "gvisor.dev/gvisor/pkg/hvf/hvftest",
     visibility = ["//visibility:public"],
+    deps = ["//pkg/hvf/entitle"],
 )
