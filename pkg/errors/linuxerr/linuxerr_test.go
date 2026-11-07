@@ -307,3 +307,20 @@ func TestConvertIntr(t *testing.T) {
 		})
 	}
 }
+
+func TestHostRoundTrip(t *testing.T) {
+	for _, err := range []*gErrors.Error{
+		linuxerr.EPERM,
+		linuxerr.ECHILD,
+		linuxerr.ENOTUNIQ,
+		linuxerr.EHWPOISON,
+		linuxerr.ERESTARTSYS,
+		linuxerr.ERESTARTNOINTR,
+		linuxerr.ERESTARTNOHAND,
+		linuxerr.ERESTART_RESTARTBLOCK,
+	} {
+		if got, want := linuxerr.HostToLinux(linuxerr.ToUnix(err)), err.Errno(); got != want {
+			t.Errorf("HostToLinux(ToUnix(%v)) = %d, want %d", err, got, want)
+		}
+	}
+}
