@@ -27,6 +27,7 @@ go_library(
     visibility = ["//pkg/sentry:internal"],
     deps = [
         "//pkg/abi/linux",
+        "//pkg/bits",
         "//pkg/atomicbitops",
         "//pkg/context",
         "//pkg/errors/linuxerr",
