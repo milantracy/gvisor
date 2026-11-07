@@ -238,12 +238,12 @@ func (f *MmapPreciseFile) mapInternalGap(fr *memmap.FileRange, gap mappingGapIte
 			uintptr(newRange.Start),
 			uintptr(newRange.Length()),
 			uintptr(prot),
-			unix.MAP_SHARED|unix.MAP_FIXED_NOREPLACE,
+			unix.MAP_SHARED|mapFixedNoreplace,
 			uintptr(f.fd),
 			uintptr(newRange.Start))
 		if errno == 0 && uint64(addr) != newRange.Start {
-			// The host kernel predates MAP_FIXED_NOREPLACE and the requested
-			// address would conflict with an existing mapping. Return EEXIST
+			// The host has no MAP_FIXED_NOREPLACE and the requested address
+			// would conflict with an existing mapping. Return EEXIST
 			// for consistency with MAP_FIXED_NOREPLACE.
 			errno = unix.EEXIST
 			unix.RawSyscall(unix.SYS_MUNMAP, addr, uintptr(newRange.Length()), 0)
