@@ -8,7 +8,9 @@ go_library(
     name = "hostfd",
     srcs = [
         "hostfd.go",
+        "hostfd_darwin_unsafe.go",
         "hostfd_linux.go",
+        "hostfd_linux_unsafe.go",
         "hostfd_unsafe.go",
     ],
     importpath = "gvisor.dev/gvisor/pkg/sentry/hostfd",

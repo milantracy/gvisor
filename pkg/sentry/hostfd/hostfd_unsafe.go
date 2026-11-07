@@ -25,6 +25,8 @@ const (
 	sizeofMsghdr = unsafe.Sizeof(unix.Msghdr{})
 )
 
+// iovecsReadWrite calls iovecsSyscall with at most MaxReadWriteIov iovecs at a
+// time. sysno is sysPreadv2 or sysPwritev2, or SYS_READV or SYS_WRITEV.
 func iovecsReadWrite(sysno uintptr, fd int32, iovs []unix.Iovec, offset int64, flags uint32) (uintptr, unix.Errno) {
 	var total uintptr
 	for start := 0; start < len(iovs); start += MaxReadWriteIov {
@@ -38,7 +40,7 @@ func iovecsReadWrite(sysno uintptr, fd int32, iovs []unix.Iovec, offset int64, f
 		if offset >= 0 {
 			curOff = offset + int64(total)
 		}
-		cur, _, e := unix.Syscall6(sysno, uintptr(fd), uintptr((unsafe.Pointer)(&iovs[start])), uintptr(size), uintptr(curOff), 0 /* pos_h */, uintptr(flags))
+		cur, e := iovecsSyscall(sysno, fd, iovs[start:start+size], curOff, flags)
 		if e != 0 {
 			return total, e
 		}
