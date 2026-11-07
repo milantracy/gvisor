@@ -324,6 +324,55 @@ Not done yet: the guest-memory `pagetables.Allocator` (requirement 9) and
 `hv_vm_unmap` before `F_PUNCHHOLE` decommit of mapped `pgalloc` ranges.
 Both are part of the platform step.
 
+## `hvf` platform
+
+`//pkg/sentry/platform/hvf` (darwin/arm64, 16K pages only).
+
+-   **Guest EL1 stub.** One page, mapped at `0xfffffffffe000000` through
+    TTBR1. Vector slot n is `hvc #(0x100+n)`, so an EL0 exception exits to
+    the host with the application registers still in the vCPU. The host
+    reads `ESR_EL1`, `ELR_EL1`, `FAR_EL1` and `SPSR_EL1`, and resumes by
+    setting PC and CPSR to EL0 directly. A flush stub at offset `0x800`
+    (`tlbi vmalle1is; ic ialluis; dsb ish; isb; eret`) is the entry point
+    when the address space changed since the vCPU last ran it.
+-   **vCPU pool.** One locked thread per host CPU, each with its own vCPU.
+    `Context.Switch` sends the switch to the pool over a channel. A
+    `CANCELED` exit at EL1 (in a vector before its HVC, or in the flush
+    stub) is handled from the EL1 state.
+-   **Interrupts.** `interrupt.Forwarder`; the receiver calls
+    `hv_vcpus_exit` on the vCPU that runs the context. The cancel is
+    sticky, so a kick before `hv_vcpu_run` is not lost.
+-   **Page tables.** `pagetables` with an `Allocator` that allocates from
+    4 MiB anonymous chunks that the registry maps (requirement 9). Each
+    address space shares the TTBR1 half. All address spaces use ASID 0.
+-   **TLB.** Each change (`MapFile`, `Unmap`) bumps the generation of the
+    address space, then stops each vCPU that is in the guest with that
+    address space and waits for its run to return. A vCPU enters through
+    the flush stub if the address space or its generation changed.
+-   **Faults.** A stage-1 fault goes to the stub, then the Sentry gets
+    `SIGSEGV` with the access type from `ESR_EL1`. A stage-2 fault exit
+    goes to `ipa.Registry.Refault`; if that does not handle it, the
+    application gets `SIGBUS`.
+-   **System registers.** `SCTLR_EL1` lets EL0 use `DC ZVA`, `CTR_EL0`,
+    cache maintenance, WFI and WFE. `TCR_EL1` is 48-bit VA, 16K granules,
+    40-bit IPA, TBI0. `CNTKCTL_EL1` lets EL0 read the virtual counter.
+
+`//pkg/hvf/hvftest` runs a test binary in an ad-hoc signed copy with the
+hypervisor entitlement; `pkg/hvf` and the platform tests use it.
+
+Checkpoint 2 (2026-11-07): `TestProgram` runs hand-written EL0 code through
+`Context.Switch`: a system call, FP and TLS state, a store fault with the
+write access type, the store after `MapFile`, an interrupt of a guest loop,
+and a fault after `Unmap` (so the TLB was invalidated). 50 runs pass.
+`BenchmarkSyscall`: 13.7 µs per system call through `Switch`, against
+0.72 µs for an HVC round trip. The difference is the channel hand-off and
+about 140 register calls per round trip (no lazy FP state yet).
+
+Known gaps: EL0 reads of ID registers get `SIGILL` (no emulation yet); the
+root page table of a released address space is not freed; freed page
+tables can be recycled while another address space's shootdown is in
+progress; one channel hand-off per switch.
+
 ## vDSO
 
 The vDSO is a `-nostdlib` Linux ELF, built for both arm64 and amd64 by a

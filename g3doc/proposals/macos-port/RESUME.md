@@ -72,7 +72,9 @@ an HVC round trip costs about 720 ns from Go (2026-11-07). The
 (`.bazelrc`); the vDSO parameters are now in the last 4 KiB of the
 parameter page. The IPA registry
 (`pkg/sentry/platform/hvf/ipa`) and the `memutil.MappingObserver` hooks in
-`pgalloc`, `fsutil` and `erofs` are done. Next: the `hvf` platform.
+`pgalloc`, `fsutil` and `erofs` are done. The `hvf` platform runs hand-written EL0 code
+through `Context.Switch` (checkpoint 2, 2026-11-07). Next: the darwin
+launcher, then a busybox EROFS image with 16 KiB blocks.
 
 ## Phase 0 probe plan (done)
 
