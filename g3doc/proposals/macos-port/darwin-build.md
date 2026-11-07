@@ -439,7 +439,25 @@ and `decimal`. Most checks take the same time as in Docker on the same Mac;
 | `docker run python:3.13-slim python3 -c pass` | 193 ms |
 
 `python3 -c pass` makes 428 system calls. Signing a copy of the binary and
-starting it again costs about 330 ms of every run.
+starting it again cost about 330 ms of every run, so `//runsc/hvfboot:hvfboot`
+is now signed at build time (`hvf_signed_binary` in
+`//pkg/hvf/entitle:defs.bzl`), and signs and re-executes a copy only when
+Hypervisor.framework returns `HV_DENIED`:
+
+| Startup, signed at build time | Time per run |
+|---|---|
+| `hvfboot /bin/true` | 11 ms |
+| `hvfboot python3 -c pass` | 28 ms |
+
+To build and run:
+
+```
+bazelisk build //runsc/hvfboot
+"$(bazelisk cquery --output=files //runsc/hvfboot)" -image python.erofs /usr/local/bin/python3 -c 'print(1)'
+```
+
+`bazel-bin` points to the configuration of the last build, so after a Linux
+cross-build it has no `hvfboot`; `cquery --output=files` gives the path.
 
 ## vDSO
 
