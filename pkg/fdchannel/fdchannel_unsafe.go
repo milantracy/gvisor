@@ -33,7 +33,7 @@ const sizeofInt32 = int(unsafe.Sizeof(int32(0)))
 // representing connected sockets that may be passed to separate calls to
 // NewEndpoint to create connected Endpoints.
 func NewConnectedSockets() ([2]int, error) {
-	return unix.Socketpair(unix.AF_UNIX, unix.SOCK_SEQPACKET|unix.SOCK_CLOEXEC, 0)
+	return newConnectedSockets()
 }
 
 // Endpoint sends file descriptors to, and receives them from, another
@@ -44,10 +44,12 @@ type Endpoint struct {
 	sockfd int32
 	msghdr unix.Msghdr
 	cmsg   *unix.Cmsghdr // followed by sizeofInt32 bytes of data
+	iov    endpointIov
 }
 
 // Init must be called on zero-value Endpoints before first use. sockfd must be
-// a blocking AF_UNIX SOCK_SEQPACKET socket.
+// a blocking AF_UNIX socket of the type that NewConnectedSockets returns
+// (SOCK_SEQPACKET on Linux, SOCK_DGRAM on darwin).
 func (ep *Endpoint) Init(sockfd int) {
 	// "Datagram sockets in various domains (e.g., the UNIX and Internet
 	// domains) permit zero-length datagrams." - recv(2). Experimentally,
@@ -57,6 +59,7 @@ func (ep *Endpoint) Init(sockfd int) {
 	ep.sockfd = int32(sockfd)
 	ep.msghdr.Control = (*byte)(unsafe.Pointer(&cmsgSlice[0]))
 	ep.cmsg = (*unix.Cmsghdr)(unsafe.Pointer(&cmsgSlice[0]))
+	ep.iov.init(&ep.msghdr)
 	// ep.msghdr.Controllen and ep.cmsg.* are mutated by recvmsg(2), so they're
 	// set before calling sendmsg/recvmsg.
 }
@@ -95,6 +98,7 @@ func (ep *Endpoint) SendFD(fd int) error {
 	ep.cmsg.SetLen(cmsgLen)
 	*ep.cmsgData() = int32(fd)
 	ep.msghdr.SetControllen(cmsgLen)
+	ep.iov.forSend()
 	_, _, e := unix.Syscall(unix.SYS_SENDMSG, uintptr(ep.sockfd), uintptr(unsafe.Pointer(&ep.msghdr)), 0)
 	if e != 0 {
 		return e
@@ -119,6 +123,7 @@ func (ep *Endpoint) RecvFDNonblock() (int, error) {
 func (ep *Endpoint) recvFD(nonblock bool) (int, error) {
 	cmsgLen := unix.CmsgLen(sizeofInt32)
 	ep.msghdr.SetControllen(cmsgLen)
+	ep.iov.forRecv()
 	var e unix.Errno
 	if nonblock {
 		_, _, e = unix.RawSyscall(unix.SYS_RECVMSG, uintptr(ep.sockfd), uintptr(unsafe.Pointer(&ep.msghdr)), unix.MSG_TRUNC|unix.MSG_DONTWAIT)
