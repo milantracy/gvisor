@@ -36,6 +36,25 @@ var libc_sandbox_free_error_trampoline_addr uintptr
 
 //go:cgo_import_dynamic libc_sandbox_free_error sandbox_free_error "/usr/lib/libSystem.B.dylib"
 
+var libc_fcntl_trampoline_addr uintptr
+
+//go:cgo_import_dynamic libc_fcntl fcntl "/usr/lib/libSystem.B.dylib"
+
+// FDPath returns the path of the file of fd (fcntl(F_GETPATH)). Pipes and
+// sockets have no path.
+//
+// A profile can allow operations on files that the process already has open
+// by their paths. Seatbelt checks some operations on open FDs, such as fstat
+// of an FD that is not open for reading.
+func FDPath(fd int) (string, error) {
+	var buf [unix.PathMax]byte
+	r, _, errno := syscall_rawSyscall(libc_fcntl_trampoline_addr, uintptr(fd), unix.F_GETPATH, uintptr(unsafe.Pointer(&buf[0])))
+	if int32(r) == -1 {
+		return "", errno
+	}
+	return unix.ByteSliceToString(buf[:]), nil
+}
+
 // Init confines the calling process with profile, an SBPL profile. It cannot
 // be undone.
 func Init(profile string) error {

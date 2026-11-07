@@ -23,3 +23,8 @@ TEXT libc_sandbox_free_error_trampoline<>(SB),NOSPLIT,$0-0
 	JMP	libc_sandbox_free_error(SB)
 GLOBL	·libc_sandbox_free_error_trampoline_addr(SB), RODATA, $8
 DATA	·libc_sandbox_free_error_trampoline_addr(SB)/8, $libc_sandbox_free_error_trampoline<>(SB)
+
+TEXT libc_fcntl_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	libc_fcntl(SB)
+GLOBL	·libc_fcntl_trampoline_addr(SB), RODATA, $8
+DATA	·libc_fcntl_trampoline_addr(SB)/8, $libc_fcntl_trampoline<>(SB)
