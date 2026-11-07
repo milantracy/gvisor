@@ -94,7 +94,7 @@ func NewFDWriter(fd int32, maxWriteBytes uint64, maxRanges, maxParallel int) *FD
 		log.Warningf("stateio.FDWriter: failed to get file status flags for FD %d: %v", fd, err)
 		// leave direct false
 	} else {
-		direct = (statusFlags & unix.O_DIRECT) != 0
+		direct = (statusFlags & oDirect) != 0
 	}
 
 	var q aio.Queue
