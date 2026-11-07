@@ -63,8 +63,8 @@ The darwin build is in progress on `macos-port/darwin-shims` (`darwin-build.md`
 has the host setup and the list of failing packages). Native Bazel works on the
 Mac. The first and second layers are done (see the progress table in
 `darwin-build.md`); package tests run on darwin, and flipcall uses
-`os_sync_wait_on_address`. Next: the third layer, `pgalloc` (decommit with
-`F_PUNCHHOLE`, registry requirement 7) and `fsimpl/eventfd`.
+`os_sync_wait_on_address`. `pgalloc` decommits with `F_PUNCHHOLE` (registry
+requirement 7). Next: `fsimpl/host` (stdio for the Phase 1 demo).
 
 ## Phase 0 probe plan (done)
 
