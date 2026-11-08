@@ -31,6 +31,7 @@ import (
 	"gvisor.dev/gvisor/pkg/state/statefile"
 	"gvisor.dev/gvisor/runsc/cgroup"
 	"gvisor.dev/gvisor/runsc/config"
+	"gvisor.dev/gvisor/runsc/console"
 	"gvisor.dev/gvisor/runsc/donation"
 	"gvisor.dev/gvisor/runsc/profile"
 	"gvisor.dev/gvisor/runsc/specutils"
@@ -91,9 +92,6 @@ func (s *Sandbox) maybeStartCheckpointGoferAndGetSocket(conf *config.Config, cg 
 // namespaces of the host, and confines itself with a Seatbelt profile (see
 // runsc/boot/filter). The Sentry binary needs the hypervisor entitlement.
 func (s *Sandbox) createSandboxProcess(conf *config.Config, args *Args) error {
-	if args.Spec.Process != nil && args.Spec.Process.Terminal {
-		return fmt.Errorf("a terminal (process.terminal) is not supported on darwin")
-	}
 	if args.DevIOFile != nil || len(args.FSRestoreImagePaths) > 0 || len(conf.TestOnlyAutosaveImagePath) != 0 {
 		return fmt.Errorf("the dev gofer, filesystem restore and autosave are not supported on darwin")
 	}
@@ -247,12 +245,28 @@ func (s *Sandbox) createSandboxProcess(conf *config.Config, args *Args) error {
 	cmd.Stdout = nil
 	cmd.Stderr = nil
 	stdios := []*os.File{os.Stdin, os.Stdout, os.Stderr}
+	if args.Spec.Process != nil && args.Spec.Process.Terminal && args.ConsoleSocket != "" {
+		// console.NewWithSocket sends the master on the given socket, and
+		// returns the replica.
+		tty, err := console.NewWithSocket(args.ConsoleSocket)
+		if err != nil {
+			return fmt.Errorf("setting up console with socket %q: %v", args.ConsoleSocket, err)
+		}
+		defer tty.Close()
+
+		// Set the TTY as a controlling TTY on the sandbox process. The Ctty
+		// is the FD in the child: stdin is the next FD donated.
+		cmd.SysProcAttr.Setctty = true
+		nextFD = donations.Transfer(cmd, nextFD)
+		cmd.SysProcAttr.Ctty = nextFD
+		stdios = []*os.File{tty, tty, tty}
+	}
 	if conf.Debug {
 		// If debugging, send the boot process stdio to the
 		// this process' stdio, so that is is easier to find.
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+		cmd.Stdin = stdios[0]
+		cmd.Stdout = stdios[1]
+		cmd.Stderr = stdios[2]
 	}
 	if err := s.configureStdios(conf, stdios); err != nil {
 		return fmt.Errorf("configuring stdios: %w", err)

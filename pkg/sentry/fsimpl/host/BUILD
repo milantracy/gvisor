@@ -28,6 +28,7 @@ go_library(
         "inode_refs.go",
         "ioctl_linux_unsafe.go",
         "save_restore.go",
+        "termios_darwin.go",
         "tty.go",
         "util.go",
         "util_linux_unsafe.go",

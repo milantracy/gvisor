@@ -123,36 +123,3 @@ func (i *inode) hostStatx(opts vfs.StatOptions) (linux.Statx, error) {
 func isHostEventFdDevice(dev uint64) bool {
 	return false
 }
-
-// The terminal ioctls return ENOTTY: darwin has another termios layout and
-// other ioctl numbers, which are not translated yet. Host TTYs are not
-// supported.
-
-func ioctlGetTermios(fd int) (*linux.Termios, error) {
-	return nil, unix.ENOTTY
-}
-
-// IsTTY returns false: host TTYs are not supported on darwin.
-func IsTTY(fd int) bool {
-	return false
-}
-
-func ioctlSetTermios(fd int, req uint64, t *linux.Termios) error {
-	return unix.ENOTTY
-}
-
-func ioctlGetTermios2(fd int) (*linux.KernelTermios, error) {
-	return nil, unix.ENOTTY
-}
-
-func ioctlSetTermios2(fd int, req uint64, t *linux.KernelTermios) error {
-	return unix.ENOTTY
-}
-
-func ioctlGetWinsize(fd int) (*linux.Winsize, error) {
-	return nil, unix.ENOTTY
-}
-
-func ioctlSetWinsize(fd int, w *linux.Winsize) error {
-	return unix.ENOTTY
-}
