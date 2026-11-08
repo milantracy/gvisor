@@ -12,8 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build amd64 || arm64
-// +build amd64 arm64
+//go:build linux && (amd64 || arm64)
 
 // Package xdp provides tools for working with AF_XDP sockets.
 //

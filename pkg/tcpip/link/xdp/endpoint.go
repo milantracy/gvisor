@@ -72,44 +72,6 @@ type endpoint struct {
 	addr tcpip.LinkAddress
 }
 
-// Options specify the details about the fd-based endpoint to be created.
-type Options struct {
-	// FD is used to read/write packets.
-	FD int
-
-	// ClosedFunc is a function to be called when an endpoint's peer (if
-	// any) closes its end of the communication pipe.
-	ClosedFunc func(tcpip.Error)
-
-	// Address is the link address for this endpoint.
-	Address tcpip.LinkAddress
-
-	// SaveRestore if true, indicates that this NIC capability set should
-	// include CapabilitySaveRestore
-	SaveRestore bool
-
-	// TXChecksumOffload if true, indicates that this endpoints capability
-	// set should include CapabilityTXChecksumOffload.
-	TXChecksumOffload bool
-
-	// RXChecksumOffload if true, indicates that this endpoints capability
-	// set should include CapabilityRXChecksumOffload.
-	RXChecksumOffload bool
-
-	// InterfaceIndex is the interface index of the underlying device.
-	InterfaceIndex int
-
-	// Bind is true when we're responsible for binding the AF_XDP socket to
-	// a device. When false, another process is expected to bind for us.
-	Bind bool
-
-	// GRO enables generic receive offload.
-	GRO bool
-
-	// QueueID is the ID of the RX queue to which the AF_XDP socket is attached.
-	QueueID uint32
-}
-
 // New creates a new endpoint from an AF_XDP socket.
 func New(opts *Options) (stack.LinkEndpoint, error) {
 	caps := stack.CapabilityResolutionRequired
