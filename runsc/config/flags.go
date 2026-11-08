@@ -105,7 +105,7 @@ func RegisterFlags(flagSet *flag.FlagSet) {
 	flagSet.Bool("strace-event", false, "send strace to event.")
 
 	// Flags that control sandbox runtime behavior.
-	flagSet.String("platform", "systrap", "specifies which platform to use: systrap (default), ptrace, kvm, auto. auto picks the best platform usable on the host.")
+	flagSet.String("platform", defaultPlatform, "specifies which platform to use: systrap (default), ptrace, kvm, auto. auto picks the best platform usable on the host.")
 	flagSet.String("platform_device_path", "", "path to a platform-specific device file (e.g. /dev/kvm for KVM platform), or comma-separated platform=path pairs (e.g. kvm=/dev/kvm2) that apply only to the named platforms. "+
 		"If unset, will use a sane platform-specific default. --platform=auto accepts only platform=path pairs.")
 	flagSet.String("watchdog-action", "log", "sets what action the watchdog takes when triggered: log (default), panic.")
@@ -161,12 +161,12 @@ func RegisterFlags(flagSet *flag.FlagSet) {
 	flagSet.Bool("gvisor-marker-file", false, "enable the presence of the /proc/gvisor/kernel_is_gvisor file that can be used by applications to detect that gVisor is in use")
 	flagSet.String("override-procs", "", "comma-separated list of proc files to override with stubs (e.g. kallsyms)")
 
-	flagSet.Bool("ignore-cgroups", false, "don't configure cgroups.")
+	flagSet.Bool("ignore-cgroups", defaultIgnoreCgroups, "don't configure cgroups.")
 	flagSet.Var(inSandboxCgroupTypePtr(InSandboxCgroupV1), flagInSandboxCgroup, "cgroup setup to use inside the sandbox: v1 (default), v2.")
 	flagSet.Int("fdlimit", -1, "Specifies a limit on the number of host file descriptors that can be open. Applies separately to the sentry and gofer. Note: each file in the sandbox holds more than one host FD open.")
 	flagSet.Int("dcache", -1, "Set the global dentry cache size. This acts as a coarse-grained control on the number of host FDs simultaneously open by the sentry. If negative, per-mount caches are used.")
 	flagSet.Bool("iouring", false, "TEST ONLY; Enables io_uring syscalls in the sentry. Support is experimental and very limited.")
-	flagSet.Bool("directfs", true, "directly access the container filesystems from the sentry. Sentry runs with higher privileges.")
+	flagSet.Bool("directfs", defaultDirectFS, "directly access the container filesystems from the sentry. Sentry runs with higher privileges.")
 	flagSet.Bool("TESTONLY-nftables", false, "TEST ONLY; Enables nftables support in the sentry.")
 
 	// Flags that control sandbox runtime behavior: network related.

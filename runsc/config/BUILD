@@ -12,6 +12,8 @@ go_library(
         "cgo_enabled.go",
         "config.go",
         "config_bundles.go",
+        "defaults_darwin.go",
+        "defaults_linux.go",
         "flags.go",
         "flags_graveyard.go",
     ],

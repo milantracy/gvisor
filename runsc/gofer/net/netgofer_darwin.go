@@ -118,7 +118,8 @@ func (n *Netgofer) Execute(_ context.Context, f *flag.FlagSet, args ...any) subc
 	return subcommands.ExitSuccess
 }
 
-// cancelOnExit calls cancel when the process pid exits.
+// cancelOnExit calls cancel when the process pid exits, or now if it has
+// already exited.
 func cancelOnExit(pid int, cancel func()) error {
 	kq, err := unix.Kqueue()
 	if err != nil {
@@ -130,7 +131,12 @@ func cancelOnExit(pid int, cancel func()) error {
 		Flags:  unix.EV_ADD | unix.EV_ONESHOT,
 		Fflags: unix.NOTE_EXIT,
 	}}
-	if _, err := unix.Kevent(kq, changes, nil, nil); err != nil {
+	if _, err := unix.Kevent(kq, changes, nil, nil); err == unix.ESRCH {
+		// The process has already exited.
+		unix.Close(kq)
+		cancel()
+		return nil
+	} else if err != nil {
 		unix.Close(kq)
 		return err
 	}
