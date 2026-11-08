@@ -23,6 +23,7 @@ import (
 	"gvisor.dev/gvisor/pkg/atomicbitops"
 	"gvisor.dev/gvisor/pkg/hostarch"
 	"gvisor.dev/gvisor/pkg/hvf"
+	"gvisor.dev/gvisor/pkg/log"
 	"gvisor.dev/gvisor/pkg/sentry/arch"
 	"gvisor.dev/gvisor/pkg/sentry/platform"
 )
@@ -229,6 +230,7 @@ func (v *vcpu) switchTo(c *context, as *addressSpace, ac *arch.Context64) (hosta
 		v.batch.SetSysReg(hvf.SysRegTTBR0EL1, ttbr0)
 		v.ttbr0 = ttbr0
 	}
+	unknownExits := 0
 	for {
 		if c.kicked.Swap(false) {
 			if loaded {
@@ -270,9 +272,22 @@ func (v *vcpu) switchTo(c *context, as *addressSpace, ac *arch.Context64) (hosta
 		}
 
 		e := v.v.Exit()
+		if e.Reason != hvf.ExitUnknown {
+			unknownExits = 0
+		}
 		switch e.Reason {
-		case hvf.ExitCanceled, hvf.ExitVTimerActivated:
+		case hvf.ExitCanceled, hvf.ExitVTimerActivated, hvf.ExitUnknown:
 			pc, pstate = v.reg(hvf.RegPC), v.reg(hvf.RegCPSR)
+			if e.Reason == hvf.ExitUnknown {
+				// Hypervisor.framework does not document when it
+				// returns this reason. The vCPU state is not changed,
+				// so enter the guest again.
+				unknownExits++
+				log.Debugf("hvf: unknown exit %d at PC %#x, PSTATE %#x: syndrome %#x, VA %#x, IPA %#x", unknownExits, pc, pstate, e.Syndrome, e.VirtualAddress, e.PhysicalAddress)
+				if unknownExits > maxUnknownExits {
+					return hostarch.NoAccess, fmt.Errorf("hvf: %d unknown exits in a row at PC %#x", unknownExits, pc)
+				}
+			}
 			if pstate&pstateModeMask == 0 {
 				// At EL0.
 				continue
@@ -313,6 +328,10 @@ func (v *vcpu) switchTo(c *context, as *addressSpace, ac *arch.Context64) (hosta
 		}
 	}
 }
+
+// maxUnknownExits is the number of unknown exits in a row after which
+// switchTo fails.
+const maxUnknownExits = 100
 
 // Signal codes, from <asm-generic/siginfo.h>.
 const (

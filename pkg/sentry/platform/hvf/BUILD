@@ -27,6 +27,7 @@ go_library(
         "//pkg/context",
         "//pkg/hostarch",
         "//pkg/hvf",
+        "//pkg/log",
         "//pkg/memutil",
         "//pkg/ring0/pagetables",
         "//pkg/sentry/arch",
