@@ -21,6 +21,7 @@ import (
 
 	"gvisor.dev/gvisor/pkg/abi/linux"
 	"gvisor.dev/gvisor/pkg/atomicbitops"
+	"gvisor.dev/gvisor/pkg/cpuid"
 	"gvisor.dev/gvisor/pkg/hostarch"
 	"gvisor.dev/gvisor/pkg/hvf"
 	"gvisor.dev/gvisor/pkg/log"
@@ -404,10 +405,55 @@ func (v *vcpu) vector(c *context, ac *arch.Context64, vec int) (hostarch.AccessT
 		c.info = signalInfo(linux.SIGFPE, 0, elr)
 	case ecBRK64, ecBreakpoint, ecSoftStep, ecWatchpoint:
 		c.info = signalInfo(linux.SIGTRAP, linux.TRAP_BRKPT, elr)
+	case ecSysReg:
+		if emulateMRS(esr, regs) {
+			// The Sentry enters the application again with the
+			// changed state.
+			return hostarch.NoAccess, platform.ErrContextInterrupt
+		}
+		c.info = signalInfo(linux.SIGILL, illIllOpc, elr)
 	default:
-		// Including ecUnknown (an undefined instruction) and ecSysReg
-		// (EL0 access to a system register).
+		// Including ecUnknown (an undefined instruction).
 		c.info = signalInfo(linux.SIGILL, illIllOpc, elr)
 	}
 	return hostarch.NoAccess, platform.ErrContextSignal
+}
+
+// ISS fields of ESR_EL1 for ecSysReg (a trapped MSR, MRS or system
+// instruction).
+const (
+	issSysRegRead     = 1 << 0
+	issSysRegCRmShift = 1
+	issSysRegRtShift  = 5
+	issSysRegCRnShift = 10
+	issSysRegOp1Shift = 14
+	issSysRegOp2Shift = 17
+	issSysRegOp0Shift = 20
+)
+
+// emulateMRS emulates an MRS instruction at EL0 that reads an ID register,
+// as Linux does (arch/arm64/kernel/cpufeature.c, do_emulate_mrs). On success
+// it writes the value to the target register in regs and moves the PC to the
+// next instruction.
+func emulateMRS(esr uint64, regs *arch.Registers) bool {
+	if esr&issSysRegRead == 0 {
+		return false
+	}
+	r := cpuid.SysReg{
+		Op0: uint8(esr>>issSysRegOp0Shift) & 0x3,
+		Op1: uint8(esr>>issSysRegOp1Shift) & 0x7,
+		CRn: uint8(esr>>issSysRegCRnShift) & 0xf,
+		CRm: uint8(esr>>issSysRegCRmShift) & 0xf,
+		Op2: uint8(esr>>issSysRegOp2Shift) & 0x7,
+	}
+	val, ok := cpuid.HostFeatureSet().IDRegister(r)
+	if !ok {
+		return false
+	}
+	if rt := (esr >> issSysRegRtShift) & 0x1f; rt != 31 {
+		// Rt 31 is XZR.
+		regs.Regs[rt] = val
+	}
+	regs.Pc += 4
+	return true
 }

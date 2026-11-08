@@ -17,6 +17,7 @@ go_library(
         "host_darwin_arm64.go",
         "host_linux_arm64.go",
         "hwcap_arm64.go",
+        "idreg_arm64.go",
         "native_amd64.go",
         "native_amd64.s",
         "native_arm64.go",
@@ -37,6 +38,7 @@ go_test(
         "cpuid_amd64_test.go",
         "cpuid_test.go",
         "host_darwin_arm64_test.go",
+        "idreg_arm64_test.go",
     ],
     embed = [":cpuid"],
     # NOTE: It seems that bazel code generation does not properly parse tags

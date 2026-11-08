@@ -25,6 +25,7 @@ go_library(
         "//pkg/abi/linux",
         "//pkg/atomicbitops",
         "//pkg/context",
+        "//pkg/cpuid",
         "//pkg/hostarch",
         "//pkg/hvf",
         "//pkg/log",
@@ -50,6 +51,7 @@ go_test(
     deps = [
         "//pkg/abi/linux",
         "//pkg/context",
+        "//pkg/cpuid",
         "//pkg/hostarch",
         "//pkg/hvf",
         "//pkg/hvf/hvftest",

@@ -23,6 +23,7 @@ import (
 
 	"gvisor.dev/gvisor/pkg/abi/linux"
 	pkgcontext "gvisor.dev/gvisor/pkg/context"
+	"gvisor.dev/gvisor/pkg/cpuid"
 	"gvisor.dev/gvisor/pkg/hostarch"
 	"gvisor.dev/gvisor/pkg/hvf"
 	"gvisor.dev/gvisor/pkg/hvf/hvftest"
@@ -51,6 +52,11 @@ var program = []uint32{
 	0x14000000, // 0x1c: b .
 	0xd4000001, // 0x20: svc #0
 	0x17ffffff, // 0x24: b .-4
+	0xd5380004, // 0x28: mrs x4, midr_el1
+	0xd5380605, // 0x2c: mrs x5, id_aa64isar0_el1
+	0xd538041f, // 0x30: mrs xzr, id_aa64pfr0_el1
+	0xd4000001, // 0x34: svc #0
+	0xd5380026, // 0x38: mrs x6, s3_0_c0_c0_1 (not emulated)
 }
 
 const (
@@ -223,6 +229,48 @@ func TestUndefinedInstruction(t *testing.T) {
 	info, _, err := e.switchTo(t)
 	if err != platform.ErrContextSignal || info.Signo != int32(linux.SIGILL) {
 		t.Fatalf("Switch = %+v, %v, want SIGILL", info, err)
+	}
+}
+
+func TestIDRegisterRead(t *testing.T) {
+	e := newTestEnv(t)
+	regs := e.regs()
+	regs.Pc = codeAddr + 0x28
+	// Each emulated MRS returns ErrContextInterrupt, and the next Switch
+	// continues after it.
+	for i := 0; ; i++ {
+		_, _, err := e.switchTo(t)
+		if err == nil {
+			break
+		}
+		if err != platform.ErrContextInterrupt || i > 10 {
+			t.Fatalf("Switch = %v, want a system call", err)
+		}
+	}
+	if regs.Pc != codeAddr+0x38 {
+		t.Fatalf("PC after system call = %#x, want %#x", regs.Pc, codeAddr+0x38)
+	}
+	fs := cpuid.HostFeatureSet()
+	for _, r := range []struct {
+		name string
+		got  uint64
+		reg  cpuid.SysReg
+	}{
+		{"MIDR_EL1", regs.Regs[4], cpuid.SysReg{Op0: 3}},
+		{"ID_AA64ISAR0_EL1", regs.Regs[5], cpuid.SysReg{Op0: 3, CRm: 6}},
+	} {
+		if want, _ := fs.IDRegister(r.reg); r.got != want {
+			t.Errorf("%s = %#x, want %#x", r.name, r.got, want)
+		}
+	}
+
+	// An MRS that Linux does not emulate is an undefined instruction.
+	info, _, err := e.switchTo(t)
+	if err != platform.ErrContextSignal || info.Signo != int32(linux.SIGILL) {
+		t.Fatalf("Switch = %+v, %v, want SIGILL", info, err)
+	}
+	if regs.Pc != codeAddr+0x38 {
+		t.Errorf("PC after SIGILL = %#x, want %#x", regs.Pc, codeAddr+0x38)
 	}
 }
 
