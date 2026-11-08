@@ -22,6 +22,8 @@ go_library(
         "dir_refs.go",
         "kcov.go",
         "pci.go",
+        "pci_darwin.go",
+        "pci_linux.go",
         "rdma.go",
         "save_restore.go",
         "sys.go",

@@ -42,6 +42,7 @@ go_template_instance(
 go_library(
     name = "nvproxy",
     srcs = [
+        "capabilities.go",
         "fds_mutex.go",
         "frontend.go",
         "frontend_mmap.go",
@@ -88,6 +89,7 @@ go_library(
         "//pkg/sentry/arch",
         "//pkg/sentry/devices/nvproxy/nvconf",
         "//pkg/sentry/fsutil",
+        "//pkg/sentry/hostmm",
         "//pkg/sentry/kernel",
         "//pkg/sentry/kernel/auth",
         "//pkg/sentry/memmap",

@@ -26,3 +26,10 @@ var Reader = rand.Reader
 func Read(b []byte) (int, error) {
 	return rand.Read(b)
 }
+
+// Init reads one random byte, to make sure that Reader works.
+func Init() error {
+	p := make([]byte, 1)
+	_, err := Read(p)
+	return err
+}

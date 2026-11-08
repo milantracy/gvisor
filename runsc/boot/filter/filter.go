@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build linux
+
 // Package filter installs seccomp filters to prevent prohibited syscalls
 // in case it's compromised.
 package filter

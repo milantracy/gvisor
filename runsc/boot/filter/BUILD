@@ -1,6 +1,9 @@
 load("//pkg/seccomp/precompiledseccomp:defs.bzl", "precompiled_seccomp_rules")
 load("//test/secbench:defs.bzl", "secbench_test")
-load("//tools:defs.bzl", "go_library", "go_test")
+# The go_library rule is imported as a different name in this case,
+# in order to avoid automated tooling doing the wrong thing with the
+# operating-specific dependencies listed below.
+load("//tools:defs.bzl", "go_test", "select_system", exempt_go_library = "go_library")
 
 package(
     default_applicable_licenses = ["//:license"],
@@ -16,12 +19,16 @@ precompiled_seccomp_rules(
     programs_to_compile_go_library = "//runsc/boot/filter/config",
 )
 
-go_library(
+exempt_go_library(
     name = "filter",
     srcs = [
         "filter.go",
+        "filter_darwin.go",
         "filter_precompiled.go",
     ],
+    # Nothing needs to be stateified, and stateify has trouble when select is
+    # used to choose deps.
+    stateify = False,
     visibility = [
         "//runsc/boot:__subpackages__",
     ],
@@ -30,10 +37,14 @@ go_library(
         "//pkg/log",
         "//pkg/seccomp",
         "//pkg/seccomp/precompiledseccomp",
+        "//pkg/sentry/devices/nvproxy/nvconf",
+        "//pkg/sentry/platform",
         "//pkg/sync",
         "//pkg/timing",
-        "//runsc/boot/filter/config",
-    ],
+    ] + select_system(
+        darwin = [],
+        linux = ["//runsc/boot/filter/config"],
+    ),
 )
 
 secbench_test(

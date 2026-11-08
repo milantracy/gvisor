@@ -10,6 +10,8 @@ go_library(
     srcs = [
         "autosave.go",
         "compat.go",
+        "compat_sysno_darwin_arm64.go",
+        "compat_sysno_linux.go",
         "compat_amd64.go",
         "compat_arm64.go",
         "controller.go",
@@ -19,6 +21,8 @@ go_library(
         "lifecyclecpus.go",
         "limits.go",
         "loader.go",
+        "loader_darwin.go",
+        "loader_linux.go",
         "mount_hints.go",
         "network.go",
         "nvproxy.go",
@@ -30,6 +34,8 @@ go_library(
         "seccomp.go",
         "strace.go",
         "tpuproxy.go",
+        "tpuproxy_darwin.go",
+        "tpuproxy_linux.go",
         "vfs.go",
     ],
     visibility = [

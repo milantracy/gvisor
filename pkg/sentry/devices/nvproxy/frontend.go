@@ -29,6 +29,7 @@ import (
 	"gvisor.dev/gvisor/pkg/log"
 	"gvisor.dev/gvisor/pkg/marshal/primitive"
 	"gvisor.dev/gvisor/pkg/sentry/arch"
+	"gvisor.dev/gvisor/pkg/sentry/hostmm"
 	"gvisor.dev/gvisor/pkg/sentry/kernel"
 	"gvisor.dev/gvisor/pkg/sentry/kernel/auth"
 	"gvisor.dev/gvisor/pkg/sentry/memmap"
@@ -746,7 +747,7 @@ func mirrorAppRange(ctx context.Context, t *kernel.Task, ar hostarch.AddrRange, 
 			}
 			for !ims.IsEmpty() {
 				im := ims.Head()
-				if _, _, errno := unix.RawSyscall6(unix.SYS_MREMAP, im.Addr(), 0 /* old_size */, uintptr(im.Len()), linux.MREMAP_MAYMOVE|linux.MREMAP_FIXED, sentryAddr, 0); errno != 0 {
+				if _, errno := hostmm.RawMremap(im.Addr(), 0 /* old_size */, uintptr(im.Len()), linux.MREMAP_MAYMOVE|linux.MREMAP_FIXED, sentryAddr); errno != 0 {
 					return appMirror{}, 0, errno
 				}
 				sentryAddr += uintptr(im.Len())
@@ -776,11 +777,7 @@ func mirrorAppRange(ctx context.Context, t *kernel.Task, ar hostarch.AddrRange, 
 		// MADV_POPULATE_WRITE, matching the access type of the pin;
 		// mm/madvise.c:madvise_populate() => mm/gup.c:faultin_page_range()
 		// does pass FOLL_UNLOCKABLE to __get_user_pages_locked().
-		advice := unix.MADV_POPULATE_READ
-		if at.Write {
-			advice = unix.MADV_POPULATE_WRITE
-		}
-		if _, _, errno := unix.Syscall(unix.SYS_MADVISE, m, uintptr(ar.Length()), uintptr(advice)); errno != 0 {
+		if errno := hostmm.MadvisePopulate(m, uintptr(ar.Length()), at.Write); errno != 0 {
 			if !madvPopulateDisabled.Swap(true) {
 				log.Infof("nvproxy: disabling MADV_POPULATE_READ/WRITE before host driver pinning: %s", errno)
 			}

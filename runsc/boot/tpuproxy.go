@@ -146,38 +146,6 @@ func getTPUBDFsInGroup(groupNum uint32) ([]string, error) {
 	return bdfs, nil
 }
 
-func safeReadDir(path string) ([]string, error) {
-	fd, err := unix.Openat(-1, path, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW, 0)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open directory %s: %w", path, err)
-	}
-	defer unix.Close(fd)
-
-	var names []string
-	buf := make([]byte, 4096)
-	for {
-		n, err := unix.Getdents(fd, buf)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get dents for %s: %w", path, err)
-		}
-		if n == 0 {
-			break
-		}
-		var count int
-		_, count, names = unix.ParseDirent(buf[:n], -1, names)
-		if count == 0 {
-			break
-		}
-	}
-	var filtered []string
-	for _, name := range names {
-		if name != "." && name != ".." {
-			filtered = append(filtered, name)
-		}
-	}
-	return filtered, nil
-}
-
 func safeReadFile(path string) ([]byte, error) {
 	fd, err := unix.Openat(-1, path, unix.O_RDONLY|unix.O_NOFOLLOW, 0)
 	if err != nil {

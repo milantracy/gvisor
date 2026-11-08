@@ -776,7 +776,7 @@ func New(args Args) (*Loader, error) {
 			return nil, fmt.Errorf("unable to remap stdios, FD %d is already in use", newfd)
 		}
 
-		err := unix.Dup3(stdioFD, newfd, unix.O_CLOEXEC)
+		err := dupCloexec(stdioFD, newfd)
 		if err != nil {
 			return nil, fmt.Errorf("dup3 of stdios failed: %w", err)
 		}
@@ -1852,18 +1852,7 @@ func (l *Loader) startGoferMonitor(info *containerInfo) {
 	}
 	go func() {
 		log.Debugf("Monitoring gofer health for container %q", info.cid)
-		events := []unix.PollFd{
-			{
-				Fd:     int32(goferFD),
-				Events: unix.POLLHUP | unix.POLLRDHUP,
-			},
-		}
-		_, _, err := specutils.RetryEintr(func() (uintptr, uintptr, error) {
-			// Use ppoll instead of poll because it's already allowed in seccomp.
-			n, err := unix.Ppoll(events, nil, nil)
-			return uintptr(n), 0, err
-		})
-		if err != nil {
+		if err := waitForHangup(goferFD); err != nil {
 			panic(fmt.Sprintf("Error monitoring gofer FDs: %s", err))
 		}
 

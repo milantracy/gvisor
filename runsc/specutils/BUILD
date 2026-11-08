@@ -49,6 +49,7 @@ go_test(
         "specutils_test.go",
     ],
     embed = [":specutils"],
+    target_compatible_with = ["@platforms//os:linux"],
     deps = [
         "//pkg/sentry/devices/nvproxy/nvconf",
         "//runsc/config",

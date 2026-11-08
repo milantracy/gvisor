@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"os"
 
-	"golang.org/x/sys/unix"
 	"google.golang.org/protobuf/proto"
 	"gvisor.dev/gvisor/pkg/eventchannel"
 	"gvisor.dev/gvisor/pkg/log"
@@ -100,19 +99,19 @@ func (c *compatEmitter) emitUnimplementedSyscall(us *spb.UnimplementedSyscall) {
 	tr := c.trackers[sysnr]
 	if tr == nil {
 		switch sysnr {
-		case unix.SYS_PRCTL:
+		case sysPrctl:
 			// args: cmd, ...
 			tr = newArgsTracker(0)
 
-		case unix.SYS_IOCTL, unix.SYS_EPOLL_CTL, unix.SYS_SHMCTL, unix.SYS_FUTEX, unix.SYS_FALLOCATE:
+		case sysIoctl, sysEpollCtl, sysShmctl, sysFutex, sysFallocate:
 			// args: fd/addr, cmd, ...
 			tr = newArgsTracker(1)
 
-		case unix.SYS_GETSOCKOPT, unix.SYS_SETSOCKOPT:
+		case sysGetsockopt, sysSetsockopt:
 			// args: fd, level, name, ...
 			tr = newArgsTracker(1, 2)
 
-		case unix.SYS_SEMCTL:
+		case sysSemctl:
 			// args: semid, semnum, cmd, ...
 			tr = newArgsTracker(2)
 
