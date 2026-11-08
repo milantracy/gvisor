@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build linux
+
 package hostinet
 
 import (
@@ -32,23 +34,6 @@ const (
 	sizeofInt16 = 2
 	sizeofInt32 = 4
 )
-
-// SockOpt is used to generate get/setsockopt handlers and filters.
-type SockOpt struct {
-	// Level the socket option applies to.
-	Level uint64
-	// Name of the option.
-	Name uint64
-	// Size of the parameter. A size of 0 indicates that any size is
-	// allowed (used for string or other variable-length types).
-	Size uint64
-	// Support getsockopt on this option.
-	AllowGet bool
-	// Support setsockopt on this option.
-	AllowSet bool
-	// AllowTruncatedGet allows getsockopt with optlen < Size.
-	AllowTruncatedGet bool
-}
 
 // SockOpts are the socket options supported by hostinet by making syscalls to the host.
 //

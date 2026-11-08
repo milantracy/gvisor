@@ -27,6 +27,8 @@ go_library(
         "socket_unsafe.go",
         "sockopt.go",
         "sockopt_impl.go",
+        "sockopt_type.go",
+        "stack_darwin.go",
         "stack.go",
         "stack_unsafe.go",
     ],
