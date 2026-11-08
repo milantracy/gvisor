@@ -44,8 +44,6 @@ package coretagprime
 import (
 	"os"
 	"runtime"
-
-	"golang.org/x/sys/unix"
 )
 
 func init() {
@@ -54,7 +52,7 @@ func init() {
 	}
 	go func() {
 		runtime.LockOSThread()
-		if err := unix.Prctl(unix.PR_SCHED_CORE, unix.PR_SCHED_CORE_CREATE, 0, unix.PR_SCHED_CORE_SCOPE_THREAD, 0); err != nil {
+		if err := createCookie(); err != nil {
 			return
 		}
 		select {}

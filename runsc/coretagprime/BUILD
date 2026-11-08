@@ -7,7 +7,11 @@ package(
 
 go_library(
     name = "coretagprime",
-    srcs = ["coretagprime.go"],
+    srcs = [
+        "coretagprime.go",
+        "coretagprime_darwin.go",
+        "coretagprime_linux.go",
+    ],
     visibility = [
         "//:__pkg__",
         "//runsc:__subpackages__",

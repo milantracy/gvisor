@@ -13,9 +13,13 @@ exempt_go_library(
     srcs = [
         "cpulimits.go",
         "network.go",
+        "network_darwin.go",
         "network_unsafe.go",
         "no_xdp.go",
+        "proxy_link.go",
         "sandbox.go",
+        "sandbox_darwin.go",
+        "sandbox_linux.go",
         "xdp.go",
     ],
     # Nothing needs to be stateified, and stateify has trouble when select is
@@ -84,6 +88,7 @@ go_test(
         "sandbox_test.go",
     ],
     embed = [":sandbox"],
+    target_compatible_with = ["@platforms//os:linux"],
     deps = [
         "//pkg/control/server",
         "//pkg/prometheus",

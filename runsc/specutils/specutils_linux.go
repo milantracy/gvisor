@@ -21,18 +21,13 @@ package specutils
 import (
 	"encoding/json"
 	"fmt"
-
 	"os"
 	"path"
 	"path/filepath"
-
 	"strconv"
-
-	"github.com/cenkalti/backoff"
 	"time"
 
 	specs "github.com/opencontainers/runtime-spec/specs-go"
-
 	"golang.org/x/sys/unix"
 )
 
@@ -58,38 +53,6 @@ func CopySpec(spec *specs.Spec) (*os.File, error) {
 		return nil, fmt.Errorf("cannot seal spec copy: %w", err)
 	}
 	return f, nil
-}
-
-// WaitForReady waits for a process to become ready. The process is ready when
-// the 'ready' function returns true. It continues to wait if 'ready' returns
-// false. It returns error on timeout, if the process stops or if 'ready' fails.
-func WaitForReady(pid int, timeout time.Duration, ready func() (bool, error)) error {
-	b := backoff.NewExponentialBackOff()
-	b.InitialInterval = 1 * time.Millisecond
-	b.MaxInterval = 1 * time.Second
-	b.MaxElapsedTime = timeout
-
-	op := func() error {
-		if ok, err := ready(); err != nil {
-			return backoff.Permanent(err)
-		} else if ok {
-			return nil
-		}
-
-		// Check if the process is still running.
-		// If the process is alive, child is 0 because of the NOHANG option.
-		// If the process has terminated, child equals the process id.
-		var ws unix.WaitStatus
-		var ru unix.Rusage
-		child, err := unix.Wait4(pid, &ws, unix.WNOHANG, &ru)
-		if err != nil {
-			return backoff.Permanent(fmt.Errorf("error waiting for process: %v", err))
-		} else if child == pid {
-			return backoff.Permanent(fmt.Errorf("process %d has terminated", pid))
-		}
-		return fmt.Errorf("process %d not running yet", pid)
-	}
-	return backoff.Retry(op, b)
 }
 
 // IsProcessRunning returns true if the process with the given PID and

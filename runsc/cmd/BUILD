@@ -21,6 +21,8 @@ go_library(
         "forward.go",
         "fscheckpoint.go",
         "gofer.go",
+        "gofer_darwin.go",
+        "gofer_linux.go",
         "install.go",
         "install_sidecars.go",
         "kill.go",
@@ -53,6 +55,7 @@ go_library(
     force_add_state_pkg = True,
     visibility = ["//runsc:__subpackages__"],
     deps = [
+        "//pkg/abi/linux",
         "//pkg/cleanup",
         "//pkg/cpuid",
         "//pkg/lisafs",

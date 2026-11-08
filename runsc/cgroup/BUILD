@@ -10,6 +10,7 @@ go_library(
     srcs = [
         "cgroup.go",
         "cgroup_v2.go",
+        "cgroup_v2_darwin.go",
         "cgroup_v2_unsafe.go",
         "systemd.go",
     ],

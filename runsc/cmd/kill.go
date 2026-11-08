@@ -23,6 +23,7 @@ import (
 	"github.com/google/subcommands"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"golang.org/x/sys/unix"
+	"gvisor.dev/gvisor/pkg/abi/linux"
 	"gvisor.dev/gvisor/runsc/cmd/util"
 	"gvisor.dev/gvisor/runsc/config"
 	"gvisor.dev/gvisor/runsc/container"
@@ -143,39 +144,41 @@ func parseSignal(s string) (unix.Signal, error) {
 	return -1, fmt.Errorf("unknown signal %q", s)
 }
 
+// signalMap maps signal names to the signal numbers of the sandbox, which
+// are the Linux ones.
 var signalMap = map[string]unix.Signal{
-	"ABRT":   unix.SIGABRT,
-	"ALRM":   unix.SIGALRM,
-	"BUS":    unix.SIGBUS,
-	"CHLD":   unix.SIGCHLD,
-	"CLD":    unix.SIGCLD,
-	"CONT":   unix.SIGCONT,
-	"FPE":    unix.SIGFPE,
-	"HUP":    unix.SIGHUP,
-	"ILL":    unix.SIGILL,
-	"INT":    unix.SIGINT,
-	"IO":     unix.SIGIO,
-	"IOT":    unix.SIGIOT,
-	"KILL":   unix.SIGKILL,
-	"PIPE":   unix.SIGPIPE,
-	"POLL":   unix.SIGPOLL,
-	"PROF":   unix.SIGPROF,
-	"PWR":    unix.SIGPWR,
-	"QUIT":   unix.SIGQUIT,
-	"SEGV":   unix.SIGSEGV,
-	"STKFLT": unix.SIGSTKFLT,
-	"STOP":   unix.SIGSTOP,
-	"SYS":    unix.SIGSYS,
-	"TERM":   unix.SIGTERM,
-	"TRAP":   unix.SIGTRAP,
-	"TSTP":   unix.SIGTSTP,
-	"TTIN":   unix.SIGTTIN,
-	"TTOU":   unix.SIGTTOU,
-	"URG":    unix.SIGURG,
-	"USR1":   unix.SIGUSR1,
-	"USR2":   unix.SIGUSR2,
-	"VTALRM": unix.SIGVTALRM,
-	"WINCH":  unix.SIGWINCH,
-	"XCPU":   unix.SIGXCPU,
-	"XFSZ":   unix.SIGXFSZ,
+	"ABRT":   unix.Signal(linux.SIGABRT),
+	"ALRM":   unix.Signal(linux.SIGALRM),
+	"BUS":    unix.Signal(linux.SIGBUS),
+	"CHLD":   unix.Signal(linux.SIGCHLD),
+	"CLD":    unix.Signal(linux.SIGCLD),
+	"CONT":   unix.Signal(linux.SIGCONT),
+	"FPE":    unix.Signal(linux.SIGFPE),
+	"HUP":    unix.Signal(linux.SIGHUP),
+	"ILL":    unix.Signal(linux.SIGILL),
+	"INT":    unix.Signal(linux.SIGINT),
+	"IO":     unix.Signal(linux.SIGIO),
+	"IOT":    unix.Signal(linux.SIGIOT),
+	"KILL":   unix.Signal(linux.SIGKILL),
+	"PIPE":   unix.Signal(linux.SIGPIPE),
+	"POLL":   unix.Signal(linux.SIGPOLL),
+	"PROF":   unix.Signal(linux.SIGPROF),
+	"PWR":    unix.Signal(linux.SIGPWR),
+	"QUIT":   unix.Signal(linux.SIGQUIT),
+	"SEGV":   unix.Signal(linux.SIGSEGV),
+	"STKFLT": unix.Signal(linux.SIGSTKFLT),
+	"STOP":   unix.Signal(linux.SIGSTOP),
+	"SYS":    unix.Signal(linux.SIGSYS),
+	"TERM":   unix.Signal(linux.SIGTERM),
+	"TRAP":   unix.Signal(linux.SIGTRAP),
+	"TSTP":   unix.Signal(linux.SIGTSTP),
+	"TTIN":   unix.Signal(linux.SIGTTIN),
+	"TTOU":   unix.Signal(linux.SIGTTOU),
+	"URG":    unix.Signal(linux.SIGURG),
+	"USR1":   unix.Signal(linux.SIGUSR1),
+	"USR2":   unix.Signal(linux.SIGUSR2),
+	"VTALRM": unix.Signal(linux.SIGVTALRM),
+	"WINCH":  unix.Signal(linux.SIGWINCH),
+	"XCPU":   unix.Signal(linux.SIGXCPU),
+	"XFSZ":   unix.Signal(linux.SIGXFSZ),
 }

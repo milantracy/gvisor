@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build linux
+
 package sandbox
 
 import (
@@ -188,36 +190,6 @@ func dialExternalUDS(path string) (*os.File, error) {
 	setUDSBufSizes(fd)
 	log.Infof("Attached sandbox network to external UDS peer %q", path)
 	return os.NewFile(uintptr(fd), "net-uds"), nil
-}
-
-// configureProxyLink configures link to operate over an external UDS proxy FD.
-func configureProxyLink(link *sentryapi.FDBasedLink) {
-	link.IsProxy = true
-	if link.NumChannels != 1 {
-		log.Warningf("Ignoring --num-network-channels=%d for interface %q: a network UDS link always uses a single channel", link.NumChannels, link.Name)
-		link.NumChannels = 1
-	}
-	// A peer told not to verify checksums is assumed not to compute them
-	// either, so accept packets with uncomputed L4 checksums. The offload
-	// flags are part of the host-side configuration that the peer is
-	// expected to be aligned with out-of-band.
-	if link.TXChecksumOffload && !link.RXChecksumOffload {
-		log.Infof("Enabling RX checksum offload on interface %q because TX checksum offload is enabled: the network UDS peer is expected to send packets without computed L4 checksums", link.Name)
-		link.RXChecksumOffload = true
-	}
-}
-
-func createDefaultLoopbackInterface(conf *config.Config, conn *urpc.Client, isRestore bool) error {
-	link := sentryapi.DefaultLoopbackLink
-	link.GVisorGRO = conf.GVisorGRO
-	if err := conn.Call(sentryapi.ContMgrSetNetworkArgs, &sentryapi.CreateLinksAndRoutesArgs{
-		LoopbackLinks: []sentryapi.LoopbackLink{link},
-		IsRestore:     isRestore,
-		LogPackets:    conf.LogPackets,
-	}, nil); err != nil {
-		return fmt.Errorf("creating loopback link and routes: %v", err)
-	}
-	return nil
 }
 
 func joinNetNS(nsPath string) (func(), error) {

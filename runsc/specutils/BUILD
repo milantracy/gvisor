@@ -19,6 +19,7 @@ go_library(
         "restore.go",
         "seccomp.go",
         "specutils.go",
+        "specutils_darwin.go",
         "specutils_linux.go",
     ],
     importpath = "gvisor.dev/gvisor/runsc/specutils",

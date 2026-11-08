@@ -201,4 +201,3 @@ func TestSentryProfileRules(t *testing.T) {
 		t.Errorf("SentryProfile:\n%s\nwant:\n%s", got, want)
 	}
 }
-

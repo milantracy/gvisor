@@ -9,6 +9,7 @@ go_library(
     name = "console",
     srcs = [
         "console.go",
+        "pty_darwin.go",
         "pty_linux.go",
     ],
     importpath = "gvisor.dev/gvisor/runsc/console",

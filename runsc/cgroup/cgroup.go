@@ -35,6 +35,7 @@ import (
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sys/unix"
+	"gvisor.dev/gvisor/pkg/abi/linux"
 	"gvisor.dev/gvisor/pkg/cleanup"
 	"gvisor.dev/gvisor/pkg/log"
 )
@@ -131,7 +132,7 @@ func IsOnlyV2() bool {
 		// It's not used for anything important, assume not V2 on failure.
 		return false
 	}
-	return stat.Type == unix.CGROUP2_SUPER_MAGIC
+	return stat.Type == linux.CGROUP2_SUPER_MAGIC
 }
 
 func setOptionalValueInt(path, name string, val *int64) error {

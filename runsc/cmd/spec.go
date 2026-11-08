@@ -74,8 +74,8 @@ func findAllTPUs(testDevicePrefix string) []specs.LinuxDevice {
 		devs = append(devs, specs.LinuxDevice{
 			Path:     path,
 			Type:     "c",
-			Major:    int64(major(stat.Rdev)),
-			Minor:    int64(minor(stat.Rdev)),
+			Major:    int64(major(uint64(stat.Rdev))),
+			Minor:    int64(minor(uint64(stat.Rdev))),
 			FileMode: &mode,
 			UID:      proto.Uint32(0),
 			GID:      proto.Uint32(0),

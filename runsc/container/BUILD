@@ -9,6 +9,8 @@ go_library(
     name = "container",
     srcs = [
         "container.go",
+        "container_darwin.go",
+        "container_linux.go",
         "gofer_to_host_rpc.go",
         "null_netns.go",
         "state_file.go",

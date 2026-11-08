@@ -453,7 +453,7 @@ func mkdir(path string, perms uint32, uid, gid int) error {
 	if err := unix.Stat(path, &st); err != nil {
 		return err
 	}
-	return unix.Chmod(path, perms|st.Mode&unix.S_ISGID)
+	return unix.Chmod(path, perms|uint32(st.Mode)&unix.S_ISGID)
 }
 
 // do runs the command in a gVisor sandbox and records its exit status.
