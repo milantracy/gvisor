@@ -272,6 +272,18 @@ func (v *VCPU) SetVTimerMask(masked bool) error {
 	return vcpuSetVTimerMask(v.id, masked)
 }
 
+// AbsoluteTime returns mach_absolute_time(). It does not count while the
+// host sleeps.
+func AbsoluteTime() uint64 {
+	return machAbsoluteTime()
+}
+
+// SetVTimerOffset sets the virtual timer offset of the vCPU. The guest
+// virtual counter (CNTVCT_EL0) is AbsoluteTime() minus offset.
+func (v *VCPU) SetVTimerOffset(offset uint64) error {
+	return vcpuSetVTimerOffset(v.id, offset)
+}
+
 // SetTrapDebugExceptions sets whether debug exceptions exit to the host.
 func (v *VCPU) SetTrapDebugExceptions(trap bool) error {
 	return vcpuSetTrapDebugExceptions(v.id, trap)

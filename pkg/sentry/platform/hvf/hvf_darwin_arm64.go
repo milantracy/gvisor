@@ -19,6 +19,7 @@ import (
 	"runtime"
 
 	"gvisor.dev/gvisor/pkg/abi/linux"
+	"gvisor.dev/gvisor/pkg/atomicbitops"
 	pkgcontext "gvisor.dev/gvisor/pkg/context"
 	"gvisor.dev/gvisor/pkg/hostarch"
 	"gvisor.dev/gvisor/pkg/hvf"
@@ -64,6 +65,10 @@ type HVF struct {
 	// atomically.
 	freeSeq      uint32
 	claimWaiters int32
+
+	// vtimerOffset is the vtimer offset that makes the guest virtual
+	// counter equal to the host counter. See vtimer_darwin_arm64.go.
+	vtimerOffset atomicbitops.Uint64
 }
 
 var (
@@ -103,6 +108,9 @@ func newHVF() (*HVF, error) {
 		Global:     true,
 	}, uintptr(stubIPA))
 	p.kernel.MarkReadOnlyShared()
+
+	p.vtimerOffset.Store(currentVTimerOffset())
+	go p.trackVTimerOffset()
 
 	n := runtime.NumCPU()
 	errs := make(chan error, n)

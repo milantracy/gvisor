@@ -59,6 +59,8 @@ type vcpu struct {
 	// lastASID and lastGen are the address space and generation that the
 	// TLB of the vCPU is valid for.
 	lastASID, lastGen uint64
+	// vtimerOffset is the vtimer offset of the vCPU. See vtimer_darwin_arm64.go.
+	vtimerOffset uint64
 }
 
 // loop creates the vCPU on a locked thread, sends the result to errs, and
@@ -123,6 +125,10 @@ func (v *vcpu) init() error {
 	}
 	if err := v.v.SetVTimerMask(true); err != nil {
 		return fmt.Errorf("masking the vtimer: %w", err)
+	}
+	v.vtimerOffset = v.p.vtimerOffset.Load()
+	if err := v.v.SetVTimerOffset(v.vtimerOffset); err != nil {
+		return fmt.Errorf("setting the vtimer offset: %w", err)
 	}
 	// Force a TLB flush on the first entry.
 	v.lastASID = 0
@@ -246,6 +252,10 @@ func (v *vcpu) switchTo(c *context, as *addressSpace, ac *arch.Context64) (hosta
 		} else {
 			v.batch.SetReg(hvf.RegPC, pc)
 			v.batch.SetReg(hvf.RegCPSR, pstate)
+		}
+		if o := v.p.vtimerOffset.Load(); o != v.vtimerOffset {
+			must(v.v.SetVTimerOffset(o))
+			v.vtimerOffset = o
 		}
 		v.doBatch()
 		loaded = true

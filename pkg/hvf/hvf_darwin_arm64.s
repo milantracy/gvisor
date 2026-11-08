@@ -104,6 +104,16 @@ TEXT libc_hv_vcpu_set_simd_fp_reg_trampoline<>(SB),NOSPLIT,$0-0
 GLOBL	·libc_hv_vcpu_set_simd_fp_reg_trampoline_addr(SB), RODATA, $8
 DATA	·libc_hv_vcpu_set_simd_fp_reg_trampoline_addr(SB)/8, $libc_hv_vcpu_set_simd_fp_reg_trampoline<>(SB)
 
+TEXT libc_mach_absolute_time_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	libc_mach_absolute_time(SB)
+GLOBL	·libc_mach_absolute_time_trampoline_addr(SB), RODATA, $8
+DATA	·libc_mach_absolute_time_trampoline_addr(SB)/8, $libc_mach_absolute_time_trampoline<>(SB)
+
+TEXT libc_hv_vcpu_set_vtimer_offset_trampoline<>(SB),NOSPLIT,$0-0
+	JMP	libc_hv_vcpu_set_vtimer_offset(SB)
+GLOBL	·libc_hv_vcpu_set_vtimer_offset_trampoline_addr(SB), RODATA, $8
+DATA	·libc_hv_vcpu_set_vtimer_offset_trampoline_addr(SB)/8, $libc_hv_vcpu_set_vtimer_offset_trampoline<>(SB)
+
 TEXT libc_hv_vcpu_set_vtimer_mask_trampoline<>(SB),NOSPLIT,$0-0
 	JMP	libc_hv_vcpu_set_vtimer_mask(SB)
 GLOBL	·libc_hv_vcpu_set_vtimer_mask_trampoline_addr(SB), RODATA, $8

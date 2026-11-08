@@ -144,6 +144,16 @@ func vcpuSetVTimerMask(id uint64, masked bool) error {
 	return result(r)
 }
 
+func machAbsoluteTime() uint64 {
+	r, _, _ := syscall_rawSyscall(libc_mach_absolute_time_trampoline_addr, 0, 0, 0)
+	return uint64(r)
+}
+
+func vcpuSetVTimerOffset(id uint64, offset uint64) error {
+	r, _, _ := syscall_rawSyscall(libc_hv_vcpu_set_vtimer_offset_trampoline_addr, uintptr(id), uintptr(offset), 0)
+	return result(r)
+}
+
 func vcpuSetTrapDebugExceptions(id uint64, trap bool) error {
 	var b uintptr
 	if trap {
@@ -230,6 +240,14 @@ var libc_hv_vcpu_set_simd_fp_reg_trampoline_addr uintptr
 var libc_hv_vcpu_set_vtimer_mask_trampoline_addr uintptr
 
 //go:cgo_import_dynamic libc_hv_vcpu_set_vtimer_mask hv_vcpu_set_vtimer_mask "/System/Library/Frameworks/Hypervisor.framework/Versions/A/Hypervisor"
+
+var libc_mach_absolute_time_trampoline_addr uintptr
+
+//go:cgo_import_dynamic libc_mach_absolute_time mach_absolute_time "/usr/lib/libSystem.B.dylib"
+
+var libc_hv_vcpu_set_vtimer_offset_trampoline_addr uintptr
+
+//go:cgo_import_dynamic libc_hv_vcpu_set_vtimer_offset hv_vcpu_set_vtimer_offset "/System/Library/Frameworks/Hypervisor.framework/Versions/A/Hypervisor"
 
 var libc_hv_vcpu_set_trap_debug_exceptions_trampoline_addr uintptr
 
