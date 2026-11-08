@@ -241,12 +241,12 @@ func (s *AsyncFileServer) RegisterClientFile(req *RegisterClientFileRequest, res
 			}
 			switch setting.Property {
 			case stateio.PropertyHugepage:
-				if err := unix.Madvise(mapping[setting.FileRange.Start:setting.FileRange.End], unix.MADV_HUGEPAGE); err != nil {
+				if err := madviseHugepage(mapping[setting.FileRange.Start:setting.FileRange.End]); err != nil {
 					// Log this failure but continue.
 					log.Warningf("stateipc.FileServer(%p): madvise(MADV_HUGEPAGE) failed: %v", s, err)
 				}
 			case stateio.PropertyNoHugepage:
-				if err := unix.Madvise(mapping[setting.FileRange.Start:setting.FileRange.End], unix.MADV_NOHUGEPAGE); err != nil {
+				if err := madviseNoHugepage(mapping[setting.FileRange.Start:setting.FileRange.End]); err != nil {
 					// Log this failure but continue.
 					log.Warningf("stateipc.FileServer(%p): madvise(MADV_NOHUGEPAGE) failed: %v", s, err)
 				}

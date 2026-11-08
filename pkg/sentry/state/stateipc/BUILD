@@ -54,6 +54,8 @@ go_library(
         "server.go",
         "sourcefile_atomicptrmap_unsafe.go",
         "stateipc.go",
+        "stateipc_darwin.go",
+        "stateipc_linux.go",
     ],
     visibility = ["//pkg/sentry:internal"],
     deps = [

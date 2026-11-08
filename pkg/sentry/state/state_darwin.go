@@ -1,4 +1,4 @@
-// Copyright 2018 The gVisor Authors.
+// Copyright 2026 The gVisor Authors.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,23 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build darwin
+
 package state
 
 import (
 	"fmt"
 	"time"
-	"unsafe"
 
 	"golang.org/x/sys/unix"
-	"gvisor.dev/gvisor/pkg/abi/linux"
 )
 
 // CPUTime returns the CPU time usage by Sentry and app.
+//
+// On darwin, the application runs on vCPU threads of the Sentry process, so
+// the process CPU time includes it.
 func CPUTime() (time.Duration, error) {
 	var ts unix.Timespec
-	_, _, errno := unix.RawSyscall(unix.SYS_CLOCK_GETTIME, uintptr(linux.CLOCK_PROCESS_CPUTIME_ID), uintptr(unsafe.Pointer(&ts)), 0)
-	if errno != 0 {
-		return 0, fmt.Errorf("failed calling clock_gettime(CLOCK_PROCESS_CPUTIME_ID): errno=%d", errno)
+	if err := unix.ClockGettime(unix.CLOCK_PROCESS_CPUTIME_ID, &ts); err != nil {
+		return 0, fmt.Errorf("failed calling clock_gettime(CLOCK_PROCESS_CPUTIME_ID): %w", err)
 	}
 	return time.Duration(ts.Nano()), nil
 }

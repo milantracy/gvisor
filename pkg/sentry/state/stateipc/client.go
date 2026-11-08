@@ -65,37 +65,15 @@ func NewAsyncFileClient(uc *urpc.Client) (*AsyncFileClient, error) {
 // down Flipcall endpoints if c.uc.Socket is disconnected.
 func (c *AsyncFileClient) watchdogMain() {
 	defer c.watchdog.Done()
-	events := []unix.PollFd{
-		{
-			Fd:     int32(c.watchdogStop.FD()),
-			Events: unix.POLLIN,
-		},
-		{
-			Fd:     int32(c.uc.Socket.FD()),
-			Events: unix.POLLHUP | unix.POLLRDHUP,
-		},
+	if !waitForHangup(c.watchdogStop.FD(), c.uc.Socket.FD()) {
+		return
 	}
-	for {
-		_, err := unix.Ppoll(events, nil, nil)
-		if err != nil {
-			if err == unix.EINTR {
-				continue
-			}
-			panic(fmt.Sprintf("stateipc.AsyncFileClient: watchdog got ppoll error: %v", err))
-		}
-		if events[0].Revents != 0 {
-			return
-		}
-		if events[1].Revents != 0 {
-			log.Infof("stateipc.AsyncFileClient: socket disconnected, shutting down file connections")
-			c.filesMu.Lock()
-			defer c.filesMu.Unlock()
-			for rw := range c.files {
-				if !rw.destroyed {
-					rw.ioep.Shutdown()
-				}
-			}
-			return
+	log.Infof("stateipc.AsyncFileClient: socket disconnected, shutting down file connections")
+	c.filesMu.Lock()
+	defer c.filesMu.Unlock()
+	for rw := range c.files {
+		if !rw.destroyed {
+			rw.ioep.Shutdown()
 		}
 	}
 }

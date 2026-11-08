@@ -11,7 +11,8 @@ go_library(
         "state.go",
         "state_metadata.go",
         "state_tsc.go",
-        "state_unsafe.go",
+        "state_darwin.go",
+        "state_linux_unsafe.go",
     ],
     visibility = ["//pkg/sentry:internal"],
     deps = [
