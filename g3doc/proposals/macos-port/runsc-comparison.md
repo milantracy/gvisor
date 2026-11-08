@@ -38,6 +38,7 @@ Status values:
 | Root file system | Gofer-served rootfs with an overlay, or an EROFS image opened by the Sentry (no gofer for `/`) | The same | Done |
 | Bind mounts | Spec mounts, served by the gofer | The same | Done |
 | `/dev` | devtmpfs in the Sentry, optional `/dev` gofer (`--dev-io-fd`) | devtmpfs and memory devices in the Sentry; no `/dev` gofer | Done (devtmpfs) |
+| Terminals | `process.terminal` with `--console-socket`: `runsc` creates the pty, sends the master on the socket and makes the replica the controlling TTY of the sandbox; `fsimpl/host` passes the termios `ioctl`s of host TTYs to the host unchanged | The same in `runsc`; `fsimpl/host` translates the termios layout, flags, control characters, speeds and requests (`TIOCGETA`, `TIOCSETA{,W,F}`) to darwin. Seatbelt does not restrict TTY `ioctl`s | Done |
 
 ## Confinement of the Sentry
 

@@ -127,7 +127,7 @@ linux/arm64 cross-build whose tests run in a `debian:trixie` container.
 | `//pkg/sentry/contexttest` | ok | | not checked | ptrace platform only on Linux; nil platform on darwin |
 | `//pkg/sentry/fsutil` | ok | pass | pass | No `MAP_FIXED_NOREPLACE`; the address is a hint |
 | `//pkg/sentry/socket`, `socket/netstack`, `socket/unix`, `fsimpl/gofer` | ok | pass | pass | Linux ABI constants for guest values; see below |
-| `//pkg/sentry/fsimpl/host` | ok | pass (new test) | pass | Per-OS stat, readiness, status flags, timestamps; no host TTY on darwin |
+| `//pkg/sentry/fsimpl/host` | ok | pass (new test) | pass | Per-OS stat, readiness, status flags, timestamps; termios translated to the darwin layout |
 | `//pkg/sentry/kernel`, `//pkg/sentry/syscalls/linux` | ok | not run | builds | Host errnos and status flags converted to Linux values |
 | `//pkg/hvf` (new) | ok | pass | builds (no files) | cgo-free Hypervisor.framework binding; see below |
 
@@ -242,8 +242,8 @@ Both are done. Later passes found `sentry/fsutil`, `sentry/socket` and
 | `//pkg/sentry/fsimpl/host` | `statx`, epoll, `Stat_t` layout, host terminal `ioctl`s |
 
 `fsimpl/host` is done (`fstat` in place of `statx`, kqueue readiness, host
-status flags converted to Linux flags, `futimens`; host TTYs return
-`ENOTTY`). After it, **all 12 demo-path targets build on darwin**
+status flags converted to Linux flags, `futimens`; host TTYs returned
+`ENOTTY` at first, see "Terminals" below). After it, **all 12 demo-path targets build on darwin**
 (2026-11-07), including `kernel`, `mm` and `syscalls/linux`. Nothing runs
 yet: there is no darwin platform.
 
@@ -912,6 +912,12 @@ Result (2026-11-07, busybox and `python:3.13-slim`):
     `kill` with a concurrent `wait` (exit status 137), `delete`.
     `run --network=sandbox` runs DNS and HTTP and returns exit status 5. No
     process is left after `delete`.
+-   Terminals, on a pty: interactive busybox `sh -i` under `runsc do`
+    (window size 40x120, resize to 50x132, Ctrl-C gives exit status 130 in
+    the shell); the Python REPL (line editing, history,
+    `os.get_terminal_size()` 100x30, Ctrl-D); `runsc run --console-socket`
+    with `process.terminal` (`stty size` 24x80, exit status 3); `runsc exec`
+    of an interactive shell (33x111, exit status 6).
 
 Startup, median of 20 runs (`runsc do` includes `create`, `start`, `wait`
 and `delete` of the container, and the gofer is not started for an EROFS
@@ -934,9 +940,22 @@ all copies of the pipe close. Pipes and sockets have no path. The other
 option, `file-read-metadata` for all paths in the Sentry profile, would let
 a compromised Sentry read the metadata of any host file; it is not used.
 
+Terminals: `fsimpl/host` translates the Linux termios `ioctl`s of host
+TTYs (`TCGETS`, `TCSETS*`, `TCGETS2`, `TCSETS*2`, `TIOCGWINSZ`,
+`TIOCSWINSZ`) to darwin. darwin has another termios layout, other flag
+values and control character indices, and `TIOCGETA` and
+`TIOCSETA{,W,F}`. It stores the speeds as numbers, not as `CBAUD` codes;
+`termios2` with `BOTHER` sets them directly. `VSWTC` has no darwin
+equivalent. Seatbelt does not restrict TTY `ioctl`s, also with
+`(deny default)`, so the Sentry profile does not change. With
+`process.terminal` and `--console-socket`, `runsc` creates the console pty,
+sends the master on the socket and makes the replica the controlling TTY
+and standard I/O of the sandbox process, as on Linux. In the guest, `tty`
+prints "not a tty" (`ttyname` finds no `/dev/pts` entry for an imported
+host TTY); this is not checked against Linux gVisor yet.
+
 Not supported on darwin yet:
 
--   Terminals (`process.terminal`, `--console-socket`); see the TTY task.
 -   Checkpoint and restore, device gofers, ID-mapped mounts, `nvproxy`,
     TPU, RDMA, `--network=host`, cgroups, and rootless flags (`runsc` on
     darwin runs as the user, with no privileges).

@@ -80,7 +80,7 @@ Mac. The first and second layers are done (see the progress table in
 `darwin-build.md`); package tests run on darwin, and flipcall uses
 `os_sync_wait_on_address`. `pgalloc` decommits with `F_PUNCHHOLE` (registry
 requirement 7). All 12 demo-path targets build on darwin (2026-11-07). Host
-TTYs are not supported yet (stdio as pipes or files). `pkg/hvf`, the
+TTYs work (termios translated to darwin; `--console-socket`). `pkg/hvf`, the
 cgo-free Hypervisor.framework binding, is done; its test runs guest code and
 an HVC round trip costs about 720 ns from Go (2026-11-07). The
 `pagesize_16k` variant is done and is the default on macOS hosts
@@ -143,8 +143,6 @@ because of a missing `_arm64_16k` stateify suffix; it is fixed.
 
 Next steps:
 
--   Host TTYs (`process.terminal`, `--console-socket`), for an interactive
-    shell or REPL.
 -   Remove `hvfboot`, or make it a thin wrapper over `runsc do`; its
     network proxy is now a copy of the one in `runsc/gofer/net`.
 -   Split the prototype into PRs for upstream review: the per-OS splits that
