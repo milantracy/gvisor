@@ -141,6 +141,16 @@ runsc --root=$HOME/.runsc delete c1
 As on Linux, start `wait` before the container exits: when the sandbox is
 gone, `wait` cannot get its exit status.
 
+## Compatibility
+
+These images work on macOS: `alpine`, `debian`, `python` (with `pip`,
+numpy and pandas), `node` (with `npm` and Express), `golang`, `nginx`,
+`redis` and `postgres`. Some images need more setup than with Docker: DNS,
+capabilities, a writable root filesystem, and the file owners of the image.
+
+See [the compatibility list](COMPATIBILITY-MACOS.md) for the images that we
+tried, the tests, the results, and the setup that each image needs.
+
 ## Defaults and flags
 
 Three flags have other defaults on macOS, the only values that work there:
