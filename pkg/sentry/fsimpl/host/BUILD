@@ -75,7 +75,10 @@ go_library(
 go_test(
     name = "host_test",
     size = "small",
-    srcs = ["host_test.go"],
+    srcs = [
+        "host_test.go",
+        "termios_darwin_test.go",
+    ],
     embed = [":host"],
     deps = [
         "//pkg/abi/linux",
