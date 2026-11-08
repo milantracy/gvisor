@@ -802,6 +802,33 @@ Result (2026-11-07, Python 3.13):
 Next: see the Status section of RESUME.md. `runsc-comparison.md` compares
 each layer with `runsc`.
 
+## Image sweep
+
+On 2026-11-08 (prototype `84b8fae50`), real images ran under `runsc` on an
+M2 Max: alpine, debian, python, node, golang, nginx, redis and postgres all
+pass. The list, the tests and the setup that Docker does and `runsc` does
+not (DNS, capabilities, a writable root, file owners) are in
+`COMPATIBILITY-MACOS.md` on the prototype branch.
+
+Platform bugs that the sweep found:
+
+-   `ipa.Registry.Translate` called its callback with the registry lock
+    held. `MapFile` maps into the page tables in the callback; when the page
+    table memory was used up, `ptMemory.newChunk` called `Translate` again
+    and the task deadlocked (`npm install`). The callback now runs after the
+    lock is released.
+-   The Sentry reads the host `CNTVCT_EL0`, which counts during host sleep.
+    The guest counter is `mach_absolute_time()` minus the vtimer offset,
+    which does not. The guest counter was below the vDSO base, so the vDSO
+    clamped the delta to 0 and time moved only at parameter updates (once a
+    second). The vtimer offset is now `mach_absolute_time()` minus the host
+    counter; a goroutine measures it each second, and a vCPU applies a
+    change before it enters the guest (one atomic load per entry).
+-   `hv_vcpu_run` returns `HV_EXIT_REASON_UNKNOWN` now and then, at EL0,
+    with a stale syndrome. `switchTo` returned an error and the task got
+    `SIGKILL` (one in three PostgreSQL `initdb` runs). Unknown exits now
+    enter the guest again; 100 in a row fail.
+
 ## runsc on darwin
 
 `runsc` runs on darwin (2026-11-07), as an OCI runtime with the same

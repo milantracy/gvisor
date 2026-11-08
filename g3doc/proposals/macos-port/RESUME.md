@@ -141,6 +141,18 @@ and two `TestStatefileOutputSymlinks` subtests that fail on `master` in
 the same Docker setup). The Linux run found that checkpoint failed on 4K builds
 because of a missing `_arm64_16k` stateify suffix; it is fixed.
 
+Image sweep (2026-11-08, prototype `84b8fae50`): alpine, debian, python
+(pip, numpy, pandas, HTTP load), node (npm, Express), golang, nginx, redis
+and postgres pass; see `COMPATIBILITY-MACOS.md` on the prototype branch.
+It found and fixed three platform bugs: an IPA registry self-deadlock
+(`npm install` hung), a guest/host counter mismatch (vDSO clocks moved once
+per second; the vtimer offset is now `mach_absolute_time()` minus the host
+counter, rechecked each second for host sleep), and undocumented
+`HV_EXIT_REASON_UNKNOWN` exits that killed tasks (now retried). Images with
+non-root file owners need the rootfs tar annotation, because a non-root
+`tar` on macOS cannot keep owners. The prototype branch also has
+`SECURITY-MACOS.md`.
+
 Next steps:
 
 -   Remove `hvfboot`, or make it a thin wrapper over `runsc do`; its
