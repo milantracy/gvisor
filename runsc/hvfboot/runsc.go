@@ -16,6 +16,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -27,6 +28,7 @@ import (
 	"gvisor.dev/gvisor/pkg/fd"
 	"gvisor.dev/gvisor/pkg/log"
 	"gvisor.dev/gvisor/pkg/timing"
+	"gvisor.dev/gvisor/pkg/urpc"
 	"gvisor.dev/gvisor/runsc/boot"
 	"gvisor.dev/gvisor/runsc/boot/sentryapi"
 	"gvisor.dev/gvisor/runsc/config"
@@ -130,6 +132,40 @@ func newSpec(argv, env []string, volumes []volume) *specs.Spec {
 	return spec
 }
 
+// networkArgs returns the links and routes of the sandbox network, as
+// `runsc` sends them with containerManager.SetNetworkArgs. If link is not
+// nil, it is a SOCK_DGRAM socket to `hvfboot net`, set up as runsc sets up a
+// link to an external network proxy (configureProxyLink in
+// runsc/sandbox/network.go).
+func networkArgs(link *os.File) *sentryapi.CreateLinksAndRoutesArgs {
+	args := &sentryapi.CreateLinksAndRoutesArgs{
+		LoopbackLinks: []sentryapi.LoopbackLink{sentryapi.DefaultLoopbackLink},
+	}
+	if link == nil {
+		return args
+	}
+	sandbox := net.IP(sandboxAddr.AsSlice())
+	gateway := net.IP(gatewayAddr.AsSlice())
+	subnet := net.IPNet{IP: sandbox.Mask(net.CIDRMask(sandboxSubnet.PrefixLen, 32)), Mask: net.CIDRMask(sandboxSubnet.PrefixLen, 32)}
+	args.FilePayload = urpc.FilePayload{Files: []*os.File{link}}
+	args.FDBasedLinks = []sentryapi.FDBasedLink{{
+		Name:        "eth0",
+		MTU:         linkMTU,
+		Addresses:   []sentryapi.IPWithPrefix{{Address: sandbox, PrefixLen: sandboxSubnet.PrefixLen}},
+		Routes:      []sentryapi.Route{{Destination: subnet}},
+		NumChannels: 1,
+		IsProxy:     true,
+	}}
+	args.Defaultv4Gateway = sentryapi.DefaultRoute{
+		Route: sentryapi.Route{
+			Destination: net.IPNet{IP: net.IPv4zero.To4(), Mask: net.CIDRMask(0, 32)},
+			Gateway:     gateway,
+		},
+		Name: "eth0",
+	}
+	return args
+}
+
 // newControlSocket returns a listening Unix socket for the control server in
 // a new directory, and a function that removes the directory.
 func newControlSocket() (int, string, func(), error) {
@@ -207,12 +243,28 @@ func runSandbox(imagePath string, argv []string) (int, error) {
 		}
 		stdioFDs = append(stdioFDs, dup)
 	}
+	var link *os.File
+	if conf.Network == config.NetworkSandbox {
+		if link, err = startNetProxy(*debug); err != nil {
+			return 0, err
+		}
+		defer link.Close()
+		// darwin limits a datagram on a Unix socket to the send buffer size.
+		fd := int(link.Fd())
+		if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_SNDBUF, linkSendBuffer); err != nil {
+			return 0, fmt.Errorf("setting the send buffer of the packet link: %w", err)
+		}
+		if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_RCVBUF, linkReceiveBuffer); err != nil {
+			return 0, fmt.Errorf("setting the receive buffer of the packet link: %w", err)
+		}
+	}
 	ctrlFD, ctrlPath, removeCtrl, err := newControlSocket()
 	if err != nil {
 		return 0, fmt.Errorf("creating the control socket: %w", err)
 	}
 	defer removeCtrl()
 
+	timer := timing.New("hvfboot", time.Now())
 	l, err := boot.New(boot.Args{
 		ID:                containerID,
 		Spec:              spec,
@@ -231,13 +283,15 @@ func runSandbox(imagePath string, argv []string) (int, error) {
 		UserLogFD:         -1,
 		PodInitConfigFD:   -1,
 		RootfsUpperTarFD:  -1,
-		StartupTimer:      timing.New("hvfboot", time.Now()),
+		StartupTimer:      timer,
 		GoferFilestoreFDs: nil,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("creating the loader: %w", err)
 	}
 	defer l.Destroy()
+
+	timer.Reached("loader created")
 
 	// Connect to the control server before confinement denies it.
 	ctrl, err := client.ConnectTo(ctrlPath)
@@ -246,6 +300,11 @@ func runSandbox(imagePath string, argv []string) (int, error) {
 	}
 	defer ctrl.Close()
 
+	l.StartControlServer()
+	if err := ctrl.Call(sentryapi.ContMgrSetNetworkArgs, networkArgs(link), nil); err != nil {
+		return 0, fmt.Errorf("setting up the network: %w", err)
+	}
+
 	var sources []string
 	for _, v := range volumes {
 		sources = append(sources, v.source)
@@ -253,16 +312,18 @@ func runSandbox(imagePath string, argv []string) (int, error) {
 	if err := confineSentry(sources); err != nil {
 		return 0, err
 	}
-
-	l.StartControlServer()
 	startErr := make(chan error, 1)
 	go func() {
 		cid := containerID
 		startErr <- ctrl.Call(sentryapi.ContMgrRootContainerStart, &cid, nil)
 	}()
 	l.WaitForStartSignal()
+	timer.Reached("start signal received")
 	if err := l.Run(); err != nil {
 		return 0, fmt.Errorf("running the sandbox: %w", err)
+	}
+	if *debug {
+		timer.Log()
 	}
 	if err := <-startErr; err != nil {
 		return 0, fmt.Errorf("starting the root container: %w", err)
