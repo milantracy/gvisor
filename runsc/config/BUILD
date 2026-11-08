@@ -34,6 +34,7 @@ go_test(
     size = "small",
     srcs = [
         "config_test.go",
+        "defaults_darwin_test.go",
         "flags_test.go",
     ],
     embed = [":config"],

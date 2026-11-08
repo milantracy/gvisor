@@ -57,7 +57,6 @@ const (
 	maxQDiscTBFBurst     = uint64(1<<32 - 1)
 	defaultQDiscTBFRate  = uint64(0)
 	defaultQDiscTBFBurst = uint64(0)
-	defaultRootDir       = "/var/run/runsc"
 	xdgRuntimeDirEnvVar  = "XDG_RUNTIME_DIR"
 )
 
@@ -65,7 +64,7 @@ const (
 func RegisterFlags(flagSet *flag.FlagSet) {
 	// Although these flags are not part of the OCI spec, they are used by
 	// Docker, and thus should not be changed.
-	flagSet.String("root", "", fmt.Sprintf("root directory for storage of container state, defaults are $%s/runsc, %s.", xdgRuntimeDirEnvVar, defaultRootDir))
+	flagSet.String("root", "", fmt.Sprintf("root directory for storage of container state, defaults are $%s/runsc, %s.", xdgRuntimeDirEnvVar, defaultRootDirHelp))
 	flagSet.String("log", "", "file path where internal debug information is written, default is stdout.")
 	flagSet.String("log-format", "text", "log format: text (default), json, or json-k8s.")
 	flagSet.Bool(flagDebug, false, "enable debug logging.")
@@ -331,7 +330,7 @@ func DefaultRootDir() string {
 	if runtimeDir := os.Getenv(xdgRuntimeDirEnvVar); runtimeDir != "" {
 		return filepath.Join(runtimeDir, "runsc")
 	}
-	return defaultRootDir
+	return osDefaultRootDir()
 }
 
 // NewFromFlags creates a new Config with values coming from command line flags.

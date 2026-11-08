@@ -21,4 +21,12 @@ const (
 	defaultPlatform      = "systrap"
 	defaultDirectFS      = true
 	defaultIgnoreCgroups = false
+	defaultRootDir       = "/var/run/runsc"
+	defaultRootDirHelp   = defaultRootDir
 )
+
+// osDefaultRootDir returns the runtime root directory when neither --root nor
+// $XDG_RUNTIME_DIR is set.
+func osDefaultRootDir() string {
+	return defaultRootDir
+}

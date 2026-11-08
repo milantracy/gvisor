@@ -16,10 +16,30 @@
 
 package config
 
+import (
+	"os"
+	"path/filepath"
+)
+
 // Default values of flags that differ by host OS. On darwin, hvf is the only
 // platform, directfs is not supported (no O_PATH), and there are no cgroups.
 const (
 	defaultPlatform      = "hvf"
 	defaultDirectFS      = false
 	defaultIgnoreCgroups = true
+	defaultRootDir       = "/var/run/runsc"
+	defaultRootDirHelp   = "$TMPDIR/runsc, " + defaultRootDir
 )
+
+// osDefaultRootDir returns the runtime root directory when neither --root nor
+// $XDG_RUNTIME_DIR is set.
+//
+// /var/run is writable only by root on macOS. $TMPDIR is a directory of the
+// user that only the user can open, and macOS empties it at boot, as Linux
+// empties /var/run.
+func osDefaultRootDir() string {
+	if tmp := os.Getenv("TMPDIR"); filepath.IsAbs(tmp) {
+		return filepath.Join(tmp, "runsc")
+	}
+	return defaultRootDir
+}
