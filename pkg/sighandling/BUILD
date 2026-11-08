@@ -9,8 +9,10 @@ go_library(
     name = "sighandling",
     srcs = [
         "sighandling.go",
+        "sighandling_darwin.go",
         "sighandling_darwin_arm64.s",
         "sighandling_darwin_unsafe.go",
+        "sighandling_linux.go",
         "sighandling_linux_unsafe.go",
     ],
     importpath = "gvisor.dev/gvisor/pkg/sighandling",

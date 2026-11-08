@@ -23,6 +23,7 @@ go_binary(
         "main.go",
         "netproxy.go",
         "netstack.go",
+        "runsc.go",
         "sentry.go",
     ],
     target_compatible_with = [
@@ -30,6 +31,13 @@ go_binary(
         "@platforms//cpu:aarch64",
     ],
     deps = [
+        "@com_github_opencontainers_runtime_spec//specs-go:go_default_library",
+        "//runsc/specutils",
+        "//runsc/flag",
+        "//runsc/boot/sentryapi",
+        "//runsc/boot",
+        "//pkg/timing",
+        "//pkg/control/client",
         "//pkg/abi/linux",
         "//pkg/buffer",
         "//pkg/context",

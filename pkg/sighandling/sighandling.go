@@ -17,10 +17,9 @@ package sighandling
 
 import (
 	"os"
-	"os/signal"
+
 	"reflect"
 
-	"golang.org/x/sys/unix"
 	"gvisor.dev/gvisor/pkg/abi/linux"
 )
 
@@ -61,53 +60,5 @@ func handleSignals(sigchans []chan os.Signal, handler func(linux.Signal), stop, 
 		// Otherwise, it was a signal on channel N. Index 0 represents the stop
 		// channel, so index N represents the channel for signal N.
 		handler(linux.Signal(index))
-	}
-}
-
-// StartSignalForwarding ensures that synchronous signals are passed to the
-// given handler function and returns a callback that stops signal delivery.
-//
-// Note that this function permanently takes over signal handling. After the
-// stop callback, signals revert to the default Go runtime behavior, which
-// cannot be overridden with external calls to signal.Notify.
-func StartSignalForwarding(handler func(linux.Signal)) func() {
-	stop := make(chan struct{})
-	done := make(chan struct{})
-
-	// Register individual channels. One channel per standard signal is
-	// required as os.Notify() is non-blocking and may drop signals. To avoid
-	// this, standard signals have to be queued separately. Channel size 1 is
-	// enough for standard signals as their semantics allow de-duplication.
-	//
-	// External real-time signals are not supported. We rely on the go-runtime
-	// for their handling.
-	//
-	// We do not forward some signals that are likely induced by the behavior
-	// of the forwarding process.
-	var sigchans []chan os.Signal
-	for sig := 1; sig <= numSignals+1; sig++ {
-		sigchan := make(chan os.Signal, 1)
-		sigchans = append(sigchans, sigchan)
-
-		// SIGURG is used by Go's runtime scheduler.
-		if sig == int(linux.SIGURG) {
-			continue
-		}
-		// SIGPIPE is received when sending to disconnected host pipes/sockets.
-		if sig == int(linux.SIGPIPE) {
-			continue
-		}
-		// SIGCHLD is received when a child of the forwarding process exits.
-		if sig == int(linux.SIGCHLD) {
-			continue
-		}
-		signal.Notify(sigchan, unix.Signal(sig))
-	}
-	// Start up our listener.
-	go handleSignals(sigchans, handler, stop, done) // S/R-SAFE: synchronized by Kernel.extMu.
-
-	return func() {
-		close(stop)
-		<-done
 	}
 }

@@ -157,6 +157,7 @@ var (
 	straceFlag = flag.Bool("strace", false, "log system calls (implies -debug)")
 	fdLimit    = flag.Int("fdlimit", -1, "limit on the number of host FDs of the gofer, or -1 for no limit")
 	network    = flag.String("network", "sandbox", "sandbox: netstack with a network proxy process (hvfboot net); none: loopback only")
+	useLoader  = flag.Bool("loader", false, "run the Sentry with boot.Loader, as runsc boot does")
 )
 
 func main() {
@@ -199,7 +200,14 @@ func main() {
 		strace.Initialize()
 		strace.EnableAll(strace.SinkTypeLog)
 	}
-	code, err := run(plat, *image, flag.Args())
+	var code int
+	if *useLoader {
+		// The Loader gets plat again from hvf.New, which makes one
+		// platform per process.
+		code, err = runSandbox(*image, flag.Args())
+	} else {
+		code, err = run(plat, *image, flag.Args())
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hvfboot: %v\n", err)
 		os.Exit(1)
