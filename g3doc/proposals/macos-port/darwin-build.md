@@ -301,6 +301,14 @@ Results, 2026-11-07:
 not build on darwin at any page size (it uses memfd seals). `systrap` still
 has 4K and 64K variants only; it is not built on darwin.
 
+`_arm64_16k` must be in the `archs` suffixes of `tools/bazeldefs/tags.bzl`,
+as `_arm64_4k` and `_arm64_64k` are. Without it, stateify puts
+`hostarch_arm64_16k.go` in the generic group of `hostarch`, and the
+generated state code of `AddrRange` gets its `pagesize_16k` constraint. Then
+a 4K build has no state code for `AddrRange`, and every checkpoint fails
+(`struct hostarch.AddrRange does not implement SaverLoader`). The Linux
+`container_test` run of 2026-11-07 found this.
+
 ## IPA registry
 
 `//pkg/sentry/platform/hvf/ipa` maps host ranges to IPA on demand
@@ -752,6 +760,9 @@ a network proxy process, as gvproxy (gvisor-tap-vsock) does for Podman:
 -   A read on a Unix datagram socket does not return when the peer closes,
     so the proxy also gets a `SOCK_STREAM` lifeline socket. It exits when
     the lifeline closes, which happens when the Sentry exits.
+-   `runsc-netgofer`, the same proxy in `runsc`, watches the sandbox process
+    with kqueue `NOTE_EXIT` (`--sandbox-pid`) in place of a lifeline socket,
+    and exits when it exits, also if it exits before the watch starts.
 -   Only IPv4 TCP and UDP. No ICMP (`ping`) and no inbound port forwarding.
 -   `-network=none` gives loopback only and starts no proxy.
 
@@ -791,16 +802,18 @@ Result (2026-11-07, Python 3.13):
 Next: see the Status section of RESUME.md. `runsc-comparison.md` compares
 each layer with `runsc`.
 
-## runsc/boot on darwin
+## runsc on darwin
 
-`runsc/boot` (`boot.Loader`) builds on darwin and runs the Sentry of
-`hvfboot` (2026-11-07). This is phase 1 of moving the port into `runsc`:
+`runsc` runs on darwin (2026-11-07), as an OCI runtime with the same
+process model as on Linux. `hvfboot` was the first launcher; the port moved
+into `runsc` in four steps, all done:
 
-1.  `runsc/boot` builds on darwin; `hvfboot` uses `boot.Loader`. Done.
+1.  `runsc/boot` builds on darwin; `hvfboot` uses `boot.Loader`.
 2.  `runsc boot` and `runsc gofer` on darwin, with Seatbelt in place of
     seccomp, namespaces and `pivot_root`.
-3.  `runsc/sandbox` and `runsc/container` on darwin.
-4.  The OCI commands (`create`, `start`, `exec`).
+3.  `runsc/sandbox` and `runsc/container` on darwin, and the
+    `runsc-netgofer` network proxy.
+4.  The OCI commands.
 
 The Linux code paths do not change. Linux-only features build on darwin as
 stubs that return errors, and Linux-only system calls move into per-OS
@@ -816,12 +829,20 @@ helpers:
 | `socket/hostinet` | Linux-only; `Stack.Configure` returns an error (no `--network=host`). |
 | `devices/nvproxy`, `rdmaproxy`, `tpuproxy` | Build; `mremap(2)` and `MADV_POPULATE_*` go through `hostmm.RawMremap` and `hostmm.MadvisePopulate`, which return `ENOSYS` on darwin. Their seccomp filters are Linux-only. |
 | `fsimpl/sys` | `lstat(2)` in place of an `O_PATH` open for PCI device files. |
-| `runsc/boot/filter` | darwin has no seccomp: `Install` returns an error, and the package does not depend on `filter/config` (`select_system` deps). A caller must disable seccomp and confine the Sentry in a different way. |
+| `runsc/boot/filter` | darwin has no seccomp. `Install` applies the Sentry Seatbelt profile at the point where the Loader installs seccomp on Linux; the package does not depend on `filter/config` (`select_system` deps). See "Confinement of the Sentry". |
 | `runsc/boot` | The compat emitter uses Linux arm64 system call numbers on darwin, not the darwin `unix.SYS_*` numbers. `dup3(2)` and the gofer hangup wait are per-OS helpers (kqueue `EV_EOF` on darwin). |
 | `pkg/sighandling` | Host signals are mapped to Linux numbers. Before, darwin `SIGURG` (16, which the Go runtime uses for preemption) went to the application as Linux signal 16 and killed it. |
 | `socket/unix/transport` | darwin fails `setsockopt(2)` with `EINVAL` and `shutdown(2)` with `ENOTCONN` on a Unix socket whose peer has closed. Before, such a socket as standard input failed the import, and closing it panicked the Sentry. |
+| `runsc/cmd/sentry/sentrycmd` | `boot` on darwin does not set up a root, apply capabilities or sync a user namespace (it rejects those flags). With `--attached`, it watches its parent with kqueue `NOTE_EXIT`, because darwin has no `PR_SET_PDEATHSIG`. The shared tail of `Execute` is `runLoader`. |
+| `runsc/cmd` (`gofer`) | `gofer` on darwin serves the real host paths of the root and the mounts (no `chroot`), writes the mounts to `--mounts-fd`, maps the sandbox root to the user, and applies the gofer Seatbelt profile (`runsc/gofer/fs/filter`). The shared tail is `serve`. |
+| `runsc/sandbox` | The Sentry binary (`gvisor-bin/gvisor_sentry`) is started directly with `Setsid`: no namespaces, user namespace, cgroup FD or FD parking. Checkpoint and restore helpers return errors. `--network=sandbox` starts `runsc-netgofer` (see "Networking"). The control socket path must be shorter than 104 bytes (no `/proc/self/fd` trick). |
+| `runsc/container` | The gofer is started without namespaces, user namespace, cgroup or chroot sync, with `--apply-caps=false --setup-root=false`. No device gofer and no ID-mapped mounts (no gofer-to-host RPCs). Filestores are created with `openat(O_NOFOLLOW)` in place of `openat2(RESOLVE_BENEATH)`. |
+| `runsc/specutils` | darwin has no pidfds: a process is its PID and its start time (`kinfo_proc`), and `WaitForNonChildExit` uses kqueue `NOTE_EXIT`. `CopySpec` is an unlinked temporary file. `ExePath` is `os.Executable()`. |
+| `runsc/cgroup`, `runsc/coretagprime`, `pkg/coretag`, `runsc/console` | Build; cgroups and core tagging return errors. `StdioIsPty` uses `TIOCGETA`. |
+| `runsc/cmd` (`do`, `kill`, `exec`) | `do` sets up no veth or iptables. `kill` uses Linux signal numbers, which the Sentry expects (darwin `SIGUSR1` is 30, Linux is 10). `exec` relays write-only stdio files through pipes (see below). |
+| `pkg/sentry/platform` | `platforms` imports `hvf` on darwin; `platformdesc` registers `hvf`, with no device file. |
 
-`hvfboot` now does what `runsc` does around `runsc boot`:
+`hvfboot` does what `runsc` does around `runsc boot`:
 
 -   It makes an OCI spec: the program, the default capabilities and mounts of
     Docker (`/proc`, `/dev`, `/dev/pts`, `/dev/shm`, `/sys`), and each `-v`
@@ -853,6 +874,101 @@ Startup of `python3 -c pass`, median of 30 runs (p5, p95):
 
 The Loader itself takes about 7 ms from `boot.New` to the start of the
 program; 4.7 ms of that is the two control RPCs and the Seatbelt profile.
+
+### runsc commands
+
+`runsc` looks for its sidecar binaries in `gvisor-bin/` next to itself, as
+on Linux. On darwin there are three binaries:
+
+| File | Target | Notes |
+|---|---|---|
+| `runsc` | `//runsc` | Not signed; needs no entitlement. Runs `create`, `start`, `exec`, and the gofer (`runsc gofer`). |
+| `gvisor-bin/gvisor_sentry` | `//runsc/cmd/sentry:gvisor_sentry_hvf` | Signed at build time with the hypervisor entitlement (`hvf_signed_binary` in `//pkg/hvf/entitle:defs.bzl`). Runs `boot`. |
+| `gvisor-bin/runsc-netgofer` | `//runsc/cmd/netgofer:runsc-netgofer` | The network proxy for `--network=sandbox`. |
+
+```
+bazelisk build //runsc //runsc/cmd/sentry:gvisor_sentry_hvf //runsc/cmd/netgofer:runsc-netgofer
+# Copy the outputs (bazelisk cquery --output=files ...) into rel/ and rel/gvisor-bin/.
+rel/runsc do --erofs busybox.erofs /bin/echo hello
+rel/runsc --network=sandbox run --bundle bundle c1
+```
+
+On darwin, three flags have different defaults, the only values that work
+there (`runsc/config/defaults_darwin.go`): `--platform=hvf`,
+`--directfs=false` and `--ignore-cgroups=true`. The default `--root` works
+without root.
+
+Result (2026-11-07, busybox and `python:3.13-slim`):
+
+-   `runsc do --erofs` with `--network=none` and `--network=sandbox`: exit
+    statuses are kept; DNS and HTTP go through `runsc-netgofer`, which is
+    confined and exits when the sandbox process exits.
+-   `runsc do --volume` with `--force-overlay=false`: create, `mkdir`,
+    symlink, rename and `chown` reach the host directory, through a gofer
+    that is confined to it.
+-   The OCI lifecycle with a directory root filesystem served by the gofer:
+    `create`, `state`, `start`, `list`, `ps`, `events --stats`, `exec`
+    (standard output and error to files, exit status 3), `exec --detach`,
+    `kill` with a concurrent `wait` (exit status 137), `delete`.
+    `run --network=sandbox` runs DNS and HTTP and returns exit status 5. No
+    process is left after `delete`.
+
+Startup, median of 20 runs (`runsc do` includes `create`, `start`, `wait`
+and `delete` of the container, and the gofer is not started for an EROFS
+root):
+
+| | Time |
+|---|---|
+| `runsc do --erofs busybox.erofs /bin/true`, `--network=none` | 24.0 ms |
+| `runsc do --erofs python.erofs python3 -c pass`, `--network=none` | 36.7 ms |
+| `runsc do --erofs python.erofs python3 -c pass`, `--network=sandbox` | 37.6 ms |
+| `hvfboot -image python.erofs python3 -c pass` (same build) | 32.9 ms |
+
+`runsc exec` and Seatbelt: Seatbelt checks `fstat` of an FD that is not
+open for reading against the path of its file. The Sentry profile allows
+that only for the files that the Sentry has open when it is confined. So
+the Sentry cannot import a write-only file that `runsc exec` gets later,
+such as a standard output redirected to a file (`EPERM`). On darwin,
+`runsc exec` replaces such files with pipes and copies from the pipes until
+all copies of the pipe close. Pipes and sockets have no path. The other
+option, `file-read-metadata` for all paths in the Sentry profile, would let
+a compromised Sentry read the metadata of any host file; it is not used.
+
+Not supported on darwin yet:
+
+-   Terminals (`process.terminal`, `--console-socket`); see the TTY task.
+-   Checkpoint and restore, device gofers, ID-mapped mounts, `nvproxy`,
+    TPU, RDMA, `--network=host`, cgroups, and rootless flags (`runsc` on
+    darwin runs as the user, with no privileges).
+-   `--network-proxy-path`: `runsc` starts its own proxy.
+-   The gofer has no parent death signal. It exits when the Sentry closes
+    its connections.
+-   `docker --runtime`: Docker on macOS runs containerd in a Linux VM, which
+    cannot run a darwin binary. A darwin containerd shim is a separate
+    project.
+
+`runsc exec --detach` drops each argument that contains the word
+`detach` (`execChildAndWait`), also on Linux. This is a separate bug.
+
+Also tested: the 14-check Python smoke test under `runsc do --volume`, and
+30 runs of `runsc --network=sandbox do /bin/true` with no error and no
+process left.
+
+Linux, in Docker (`make build`, `make test`): `runsc`, `gvisor_sentry`,
+`runsc-netgofer` and the changed packages build. These tests pass:
+specutils, sandbox, cgroup, platforms, gvisorbinaries, sandboxsetup,
+coretagprime, netgofer, config, the `runsc/boot/filter` and
+`runsc/gofer/fs` tests, and the checkpoint and restore tests of
+`container_test` on systrap. The other failures in `container_test` are
+the `kvm` subtests (Docker Desktop has no `/dev/kvm`) and the EROFS chunk
+tests (the `mkfs.erofs` 1.4 of the builder image has no `--chunksize`).
+Two `cmd_test` subtests fail, `TestStatefileOutputSymlinks/dev_stdout_*`
+and `.../proc_fd_symlink_*`, with "error opening output". Their code moved
+into `statefile_output_linux.go` unchanged. They are not yet compared with
+`master`: the Docker VM was out of disk space for a second workspace.
+
+`runsc/gofer/net` on darwin has a copy of the `hvfboot net` proxy. One of
+the two is to go when `hvfboot` is removed or uses the netgofer.
 
 ## vDSO
 

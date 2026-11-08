@@ -20,9 +20,9 @@ Status values:
 
 | Layer | runsc on Linux | macOS port | Status |
 |---|---|---|---|
-| Launcher | `runsc` (OCI runtime) creates the sandbox and the gofer, and passes FDs to them (`runsc/container/container.go`, `runsc/sandbox/sandbox.go`) | `hvfboot` (`runsc/hvfboot`), a launcher for one program, not an OCI runtime. It makes an OCI spec and a runsc configuration, and passes FDs in `runsc` order | Done (launcher); `runsc` on darwin is Planned |
-| Sentry process | `runsc boot`, one per sandbox; it runs `boot.Loader` (`runsc/boot/loader.go`) | `hvfboot`, one per run; it runs `boot.Loader` with its control server, as `runsc boot` does | Done (`boot.Loader`); `runsc boot` command is Planned |
-| Gofer process | `runsc gofer`, one per container, serves all its mounts (`container.go`: "One gofer process serves all of a container's mounts") | `hvfboot gofer`, one per run, serves all host mounts | Done |
+| Launcher | `runsc` (OCI runtime) creates the sandbox and the gofer, and passes FDs to them (`runsc/container/container.go`, `runsc/sandbox/sandbox.go`) | `runsc`, the same code; darwin files start the processes without namespaces, cgroups or user namespaces. `hvfboot` (`runsc/hvfboot`) is the earlier launcher for one program | Done |
+| Sentry process | `runsc boot`, one per sandbox, from the `gvisor_sentry` sidecar; it runs `boot.Loader` (`runsc/boot/loader.go`) | The same: `gvisor-bin/gvisor_sentry boot`, signed with the hypervisor entitlement. With `--attached` it watches its parent with kqueue (no `PR_SET_PDEATHSIG`) | Done |
+| Gofer process | `runsc gofer`, one per container, serves all its mounts (`container.go`: "One gofer process serves all of a container's mounts") | `runsc gofer`, the same; it serves the real host paths and has no parent death signal | Done |
 | Application isolation from the Sentry | Platform: systrap, ptrace or KVM | `hvf` platform on Hypervisor.framework; the application runs at EL0 in a VM, the Sentry on the host | Done |
 
 ## File systems
@@ -30,12 +30,12 @@ Status values:
 | Layer | runsc on Linux | macOS port | Status |
 |---|---|---|---|
 | Sentry-to-gofer connection | One `SOCK_STREAM` socket pair per lisafs mount (`createLisafsSocketPair`); the gofer gets `--io-fds`, the sandbox the other ends | The same | Done |
-| Mount order | `--gofer-mount-confs` and `--io-fds`: root first, then the spec mounts in order | The same order: root (if served by the gofer), then each `-v` mount | Done |
+| Mount order | `--gofer-mount-confs` and `--io-fds`: root first, then the spec mounts in order | The same | Done |
 | lisafs server | `runsc/gofer/fs` (`lisafs.go`); `Gofer.serve` makes one `lisafs.Server` and one connection per io FD | The same package; darwin host calls in `lisafs_darwin.go` | Done |
 | lisafs wire format | Linux flags and Linux errnos | The same; the darwin server translates flags and errnos | Done |
 | Host file access from the Sentry | directfs: the gofer donates host FDs and the Sentry makes file system calls on them | lisafs only; directfs uses `O_PATH`, `statx`, `AT_EMPTY_PATH` and fails with `EINVAL` if asked for | Done (lisafs only) |
-| Root file system | Gofer-served rootfs with an overlay, or an EROFS image opened by the Sentry (no gofer for `/`) | EROFS image opened by the Sentry | Done (EROFS); gofer-served root is Later |
-| Bind mounts | Spec mounts, served by the gofer | `-v host:guest[:ro]`, served by the gofer, with the same mount options as a shared `runsc` mount | Done |
+| Root file system | Gofer-served rootfs with an overlay, or an EROFS image opened by the Sentry (no gofer for `/`) | The same | Done |
+| Bind mounts | Spec mounts, served by the gofer | The same | Done |
 | `/dev` | devtmpfs in the Sentry, optional `/dev` gofer (`--dev-io-fd`) | devtmpfs and memory devices in the Sentry; no `/dev` gofer | Done (devtmpfs) |
 
 ## Confinement of the Sentry
@@ -43,7 +43,7 @@ Status values:
 | Layer | runsc on Linux | macOS port | Status |
 |---|---|---|---|
 | File system view | New mount namespace; `pivot_root` into a read-only tmpfs with `/etc/localtime` and a minimal procfs (`runsc/cmd/sentry/sentrycmd/chroot.go`, `setUpChroot`). The Sentry keeps only FDs that it opened before | No mount namespace, `pivot_root` or bind mounts; `chroot(2)` needs root. A Seatbelt (`sandbox_init`) profile denies all file access; the Sentry opens the EROFS image, gofer sockets and `/etc/localtime` first, and those FDs keep working. The profile allows only `fstat` (`file-read-metadata`) of the standard I/O files and under the mount sources, because Seatbelt checks `fstat` of FDs that are not open for reading | Done |
-| System call filter | seccomp-bpf (`runsc/boot/filter`, installed in `loader.go`) | No seccomp: `filter.Install` returns an error on darwin, so seccomp must be disabled explicitly. The Seatbelt profile denies process exec, network and IPC; it filters by operation and path, not by system call | Done |
+| System call filter | seccomp-bpf (`runsc/boot/filter`, installed in `loader.go`) | No seccomp. `filter.Install` applies the Seatbelt profile at the same point in `loader.go`. The profile denies process exec, network and IPC; it filters by operation and path, not by system call | Done |
 | Namespaces | New IPC, mount, UTS, PID and (if asked) network and user namespaces (`sandbox.go`, the `nss` list) | No namespaces on macOS. Seatbelt covers file, network, IPC and exec access | No equivalent |
 | User | Optional user namespace with UID/GID mappings; can run as nobody | Runs as the calling user. A separate user needs root to set up | Later |
 | Sandbox IDs on host files | Rootless: the user namespace maps sandbox root to the user; other IDs are unmapped | The darwin gofer does the same mapping itself (`MapRootToEffectiveIDs`): 0 is the user, other host IDs are 65534, `chown` to other IDs fails | Done |
@@ -65,13 +65,13 @@ Status values:
 
 | Layer | runsc on Linux | macOS port | Status |
 |---|---|---|---|
-| Default network | netstack in the Sentry; its only link is an `AF_PACKET` socket on a veth in the network namespace of the sandbox (`fdbased`); the host kernel routes and NATs | netstack in the Sentry; its only link is the `fdbased` link of a `runsc` external network proxy (`IsProxy`), over a `SOCK_DGRAM` socket pair (darwin has no Unix `SOCK_SEQPACKET`) to `hvfboot net`, a proxy process that ends TCP and UDP flows in its own netstack and makes host connections | Done (IPv4 TCP and UDP) |
+| Default network | netstack in the Sentry; its only link is an `AF_PACKET` socket on a veth in the network namespace of the sandbox (`fdbased`); the host kernel routes and NATs | netstack in the Sentry; its only link is the `fdbased` link of a `runsc` external network proxy (`IsProxy`), over a `SOCK_DGRAM` socket pair (darwin has no Unix `SOCK_SEQPACKET`) to `runsc-netgofer`, a proxy process that `runsc start` starts and that ends TCP and UDP flows in its own netstack and makes host connections | Done (IPv4 TCP and UDP) |
 | DNS | The `resolv.conf` of the container | Port 53 to any address goes to the host DNS server | Done |
 | Confinement of the network path | The host kernel, with namespaces | The proxy has a Seatbelt profile: outbound IP only, not to the host itself; no files, exec or IPC | Done |
 | New network namespaces | Loopback only | Loopback only | Done |
 | ICMP, IPv6, inbound ports | Supported | Not supported | Later |
 | Host network | `--network=host` (hostinet) | Not planned | Later |
-| None | `--network=none`: loopback only | `-network=none`: loopback only | Done |
+| None | `--network=none`: loopback only | The same | Done |
 
 ## Known differences that remain
 
@@ -98,9 +98,9 @@ Status values:
 4.  Done: networking through a proxy process with its own Seatbelt profile.
 5.  Done: `runsc/boot` builds on darwin; `hvfboot` runs the Sentry with
     `boot.Loader`.
-6.  Planned: `runsc boot` and `runsc gofer` on darwin, with the Seatbelt
+6.  Done: `runsc boot` and `runsc gofer` on darwin, with the Seatbelt
     profiles in place of `filter.Install`, namespaces and `pivot_root`.
-7.  Planned: `runsc/sandbox` and `runsc/container` on darwin, then the OCI
-    commands.
+7.  Done: `runsc/sandbox` and `runsc/container` on darwin, `runsc-netgofer`,
+    and the OCI commands.
 
 None of these steps needs root.

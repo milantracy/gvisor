@@ -124,18 +124,37 @@ own Seatbelt profile; `pip download` works ("Networking" in
 `darwin-build.md`).
 
 `hvfboot` is to become `runsc` on darwin, in steps, not a second runtime
-(decided 2026-11-07). Step 1 is done (2026-11-07): `runsc/boot` builds on
-darwin with no change to Linux behavior, and `hvfboot` runs the Sentry
-with `boot.Loader`, its control server and the network and start RPCs, as
-`runsc boot` does. seccomp fails closed on darwin (`filter.Install`
-returns an error), so `hvfboot` disables it and applies the Seatbelt
-profile. The Linux build and tests of the changed packages pass in Docker
-(`make build`, `make test`). Startup is about 3 ms slower (30 ms for
-`python3 -c pass`). Next steps: `runsc boot` and `runsc gofer` on darwin,
-then `runsc/sandbox` and `runsc/container`, then the OCI commands ("runsc/boot
-on darwin" in `darwin-build.md`). Lazy FP state
-and EL0 ID-register `MRS` emulation (low priority: the KVM platform does not
-emulate it either) are deferred.
+(decided 2026-11-07). All four steps are done (2026-11-07): `runsc` is an
+OCI runtime on darwin with the `runsc` process model ("runsc on darwin" in
+`darwin-build.md`). `runsc` starts a gofer (`runsc gofer`), the Sentry
+(`gvisor-bin/gvisor_sentry`, signed at build time) and, with
+`--network=sandbox`, the network proxy (`gvisor-bin/runsc-netgofer`). Each
+runs under its own Seatbelt profile, in place of the namespaces,
+`pivot_root`, `chroot` and seccomp of `runsc`. `create`, `start`, `state`,
+`list`, `ps`, `events`, `exec`, `kill`, `wait`, `delete`, `run` and `do`
+work with an EROFS root or a directory root served by the gofer. `runsc do`
+runs `python3 -c pass` in 37 ms. The Linux code paths do not change: Linux
+code moved into `_linux.go` files, and the Linux build and the tests of the
+changed packages build in Docker, and their tests pass except as listed
+in "runsc commands" in `darwin-build.md` (kvm subtests without `/dev/kvm`,
+and two `TestStatefileOutputSymlinks` subtests not yet compared with
+`master`). The Linux run found that checkpoint failed on 4K builds
+because of a missing `_arm64_16k` stateify suffix; it is fixed.
+
+Next steps:
+
+-   Host TTYs (`process.terminal`, `--console-socket`), for an interactive
+    shell or REPL.
+-   Remove `hvfboot`, or make it a thin wrapper over `runsc do`; its
+    network proxy is now a copy of the one in `runsc/gofer/net`.
+-   Split the prototype into PRs for upstream review: the per-OS splits that
+    do not change Linux behavior first.
+-   A darwin containerd shim, if `docker`-like use is wanted: Docker on
+    macOS runs containerd in a Linux VM, so `docker --runtime` cannot use a
+    darwin `runsc`.
+
+Lazy FP state and EL0 ID-register `MRS` emulation (low priority: the KVM
+platform does not emulate it either) are deferred.
 
 ## Phase 0 probe plan (done)
 
