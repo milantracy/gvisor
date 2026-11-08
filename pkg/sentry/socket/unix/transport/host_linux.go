@@ -39,3 +39,8 @@ func hostPasscred(fd int) (bool, error) {
 	passcred, err := unix.GetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_PASSCRED)
 	return passcred != 0, err
 }
+
+// shutdownHostSocket shuts down part of the connection of fd.
+func shutdownHostSocket(fd, how int) error {
+	return unix.Shutdown(fd, how)
+}

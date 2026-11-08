@@ -26,7 +26,7 @@ import (
 const msgNoSignal = 0
 
 // setupHostSocket returns an error if fd is not a Unix domain socket, and sets
-// SO_NOSIGPIPE on it. darwin has no SO_DOMAIN, so the family comes from
+// SO_NOSIGPIPE on it if it is connected. darwin has no SO_DOMAIN, so the family comes from
 // getsockname(2).
 func setupHostSocket(fd int) *syserr.Error {
 	sa, err := unix.Getsockname(fd)
@@ -37,7 +37,11 @@ func setupHostSocket(fd int) *syserr.Error {
 		// We only allow Unix sockets.
 		return syserr.ErrInvalidEndpointState
 	}
-	if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_NOSIGPIPE, 1); err != nil {
+	// darwin fails setsockopt(2) with EINVAL on a socket whose peer has
+	// closed. Writes to such a socket fail with EPIPE, and the Go runtime
+	// ignores the SIGPIPE of writes that are not by os.File to standard
+	// output or standard error.
+	if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_NOSIGPIPE, 1); err != nil && err != unix.EINVAL {
 		return syserr.FromError(err)
 	}
 	return nil
@@ -53,4 +57,14 @@ func hostPasscred(fd int) (bool, error) {
 // credentials in this case.
 func credsControl(fd int) ([]byte, error) {
 	return nil, nil
+}
+
+// shutdownHostSocket shuts down part of the connection of fd. darwin fails
+// shutdown(2) with ENOTCONN on a socket whose peer has closed, where Linux
+// succeeds; both directions of such a socket are already shut down.
+func shutdownHostSocket(fd, how int) error {
+	if err := unix.Shutdown(fd, how); err != nil && err != unix.ENOTCONN {
+		return err
+	}
+	return nil
 }

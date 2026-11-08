@@ -220,7 +220,7 @@ func (c *HostSender) closeSendLocked() {
 		return
 	}
 
-	if err := unix.Shutdown(c.fd, unix.SHUT_WR); err != nil {
+	if err := shutdownHostSocket(c.fd, unix.SHUT_WR); err != nil {
 		// A well-formed UDS shutdown can't fail. See
 		// net/unix/af_unix.c:unix_shutdown.
 		panic(fmt.Sprintf("failed write shutdown on host socket %+v: %v", c, err))
@@ -350,7 +350,7 @@ func (c *HostSender) closeRecvLocked() {
 		return
 	}
 
-	if err := unix.Shutdown(c.fd, unix.SHUT_RD); err != nil {
+	if err := shutdownHostSocket(c.fd, unix.SHUT_RD); err != nil {
 		// A well-formed UDS shutdown can't fail. See
 		// net/unix/af_unix.c:unix_shutdown.
 		panic(fmt.Sprintf("failed read shutdown on host socket %+v: %v", c, err))
