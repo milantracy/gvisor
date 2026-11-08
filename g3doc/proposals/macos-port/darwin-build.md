@@ -840,7 +840,7 @@ helpers:
 Result (2026-11-07): the 14-check Python smoke test, the host mount tests
 (read, write, rename, symlinks, a read-only mount, IDs, `fstat` of
 write-only files), DNS, HTTP and HTTPS, and 40 runs with a host mount pass.
-The Linux build of the changed packages (`make build`, 223 targets) and
+The Linux build of the changed packages (`make build`) and
 their Linux tests (`make test`: transport, stateio, stateipc, fdbased,
 portforward, specutils) pass.
 
