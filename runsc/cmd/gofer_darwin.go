@@ -70,11 +70,12 @@ func (g *Gofer) Execute(_ context.Context, f *flag.FlagSet, args ...any) subcomm
 
 	// The darwin lisafs server opens files again by path, and allows no
 	// symlinks in it. Seatbelt matches real paths too. So the gofer serves
-	// real paths.
+	// real, absolute paths. The paths of the spec are relative to the
+	// working directory if the bundle path is relative.
 	var mounts []filter.Mount
 	root := spec.Root.Path
 	if g.mountConfs[0].ShouldUseLisafs() {
-		if root, err = filepath.EvalSymlinks(root); err != nil {
+		if root, err = realPath(root); err != nil {
 			util.Fatalf("resolving the root filesystem: %v", err)
 		}
 		mounts = append(mounts, filter.Mount{Path: root, ReadOnly: spec.Root.Readonly || g.mountConfs[0].ShouldUseOverlayfs()})
@@ -90,7 +91,7 @@ func (g *Gofer) Execute(_ context.Context, f *flag.FlagSet, args ...any) subcomm
 		if !mountConf.ShouldUseLisafs() {
 			continue
 		}
-		real, err := filepath.EvalSymlinks(m.Source)
+		real, err := realPath(m.Source)
 		if err != nil {
 			util.Fatalf("resolving mount source %q: %v", m.Source, err)
 		}
@@ -155,4 +156,13 @@ func (g *Gofer) Execute(_ context.Context, f *flag.FlagSet, args ...any) subcomm
 
 	mountPath := func(m *specs.Mount) string { return sources[m.Source] }
 	return g.serve(spec, conf, root, root, mountPath, ruid, euid, rgid, egid, groups, false)
+}
+
+// realPath returns the absolute path of p with no symbolic links.
+func realPath(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(abs)
 }
