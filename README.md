@@ -2,6 +2,10 @@
 
 # gVisor on macOS (experimental)
 
+> **Security:** gVisor on macOS does not have all of the protection layers
+> of gVisor on Linux. Read the [security model](SECURITY-MACOS.md) before
+> you use it.
+
 **This is an experimental branch.** It runs `runsc`, the gVisor OCI runtime,
 natively on macOS on Apple Silicon. It is a prototype: it is not part of a
 gVisor release, it is not reviewed upstream, and it is not supported. Do not
