@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path"
 	"syscall"
 
 	specs "github.com/opencontainers/runtime-spec/specs-go"
