@@ -1,203 +1,163 @@
 ![gVisor](g3doc/logo.png)
 
-[![Build status](https://badge.buildkite.com/3b159f20b9830461a71112566c4171c0bdfd2f980a8e4c0ae6.svg?branch=master)](https://buildkite.com/gvisor/pipeline)
-[![Issue reviver](https://github.com/google/gvisor/actions/workflows/issue_reviver.yml/badge.svg)](https://github.com/google/gvisor/actions/workflows/issue_reviver.yml)
-[![CodeQL](https://github.com/google/gvisor/actions/workflows/codeql.yml/badge.svg)](https://github.com/google/gvisor/actions/workflows/codeql.yml)
-[![code search](https://img.shields.io/badge/code-search-blue)](https://cs.opensource.google/gvisor/gvisor)
+# gVisor on macOS (experimental)
 
-## What is gVisor?
+**This is an experimental branch.** It runs `runsc`, the gVisor OCI runtime,
+natively on macOS on Apple Silicon. It is a prototype: it is not part of a
+gVisor release, it is not reviewed upstream, and it is not supported. Do not
+use it to run untrusted code yet.
 
-**gVisor** provides a strong layer of isolation between running applications and
-the host operating system. It is an application kernel that implements a
-[Linux-like interface][linux]. Unlike Linux, it is written in a memory-safe
-language (Go) and runs in userspace.
+For gVisor itself, see the [upstream repository](https://github.com/google/gvisor)
+and [gvisor.dev](https://gvisor.dev).
 
-gVisor includes an [Open Container Initiative (OCI)][oci] runtime called `runsc`
-that makes it easy to work with existing container tooling. The `runsc` runtime
-integrates with Docker and Kubernetes, making it simple to run sandboxed
-containers.
+## How it works
 
-## What **isn't** gVisor?
+`runsc` on macOS has the same process model as on Linux:
 
-*   gVisor is **not a syscall filter** (e.g. `seccomp-bpf`), nor a wrapper over
-    Linux isolation primitives (e.g. `firejail`, AppArmor, etc.).
-*   gVisor is also **not a VM** in the everyday sense of the term (e.g.
-    VirtualBox, QEMU).
+-   The Sentry (the gVisor kernel) runs in its own process. It uses the new
+    `hvf` platform: the application runs at EL0 in a virtual machine of
+    Hypervisor.framework, and the Sentry handles its system calls on the host.
+-   The gofer serves the root filesystem and the bind mounts of the container
+    to the Sentry, over lisafs.
+-   `runsc-netgofer` is the network proxy for `--network=sandbox`.
+-   Seatbelt (`sandbox_init`) profiles confine the Sentry, the gofer and the
+    network proxy, in place of seccomp, namespaces and `pivot_root`.
 
-**gVisor takes a distinct third approach**, providing many security benefits of
-VMs while maintaining the lower resource footprint, fast startup, and
-flexibility of regular userspace applications.
+`runsc` needs no root and no developer account. The Sentry binary is signed
+at build time with the `com.apple.security.hypervisor` entitlement.
 
-## Why does gVisor exist?
+## Requirements
 
-Containers are not a [**sandbox**][sandbox]. While containers have
-revolutionized how we develop, package, and deploy applications, using them to
-run untrusted or potentially malicious code without additional isolation is not
-a good idea. While using a single, shared kernel allows for efficiency and
-performance gains, it also means that container escape is possible with a single
-vulnerability.
+-   A Mac with Apple Silicon. Tested on macOS 26.6.
+-   [Bazelisk](https://github.com/bazelbuild/bazelisk):
+    `brew install bazelisk`.
+-   Docker, only to get container images. Images must be `arm64`, which is
+    the default on Apple Silicon.
 
-gVisor is an application kernel for containers. It limits the host kernel
-surface accessible to the application while still giving the application access
-to all the features it expects. Unlike most kernels, gVisor does not assume or
-require a fixed set of physical resources; instead, it leverages existing host
-kernel functionality and runs as a normal process. In other words, gVisor
-implements Linux by way of Linux.
+## Quick start
 
-gVisor should not be confused with technologies and tools to harden containers
-against external threats, provide additional integrity checks, or limit the
-scope of access for a service. One should always be careful about what data is
-made available to a container.
+This follows the
+[OCI quick start](https://gvisor.dev/docs/user_guide/quick_start/oci/) of
+gVisor. The differences on macOS: no `sudo`, and `--root` must be a
+directory that you can write.
 
-## Documentation
+### Build `runsc`
 
-User documentation and technical architecture, including quick start guides, can
-be found at [gvisor.dev][gvisor-dev].
+`runsc` looks for the Sentry and the network proxy in `gvisor-bin/` next to
+itself. In the root of this repository:
 
-## Installing from source
+```bash
+bazelisk build //runsc:runsc //runsc/cmd/sentry:gvisor_sentry_hvf //runsc/cmd/netgofer:runsc-netgofer
 
-gVisor builds on x86_64 and ARM64. Other architectures may become available in
-the future.
-
-For the purposes of these instructions, [bazel][bazel] and other build
-dependencies are wrapped in a build container. It is possible to use
-[bazel][bazel] directly, or type `make help` for standard targets.
-
-### Requirements
-
-Make sure the following dependencies are installed:
-
-*   Linux 5.6+
-*   [Docker version 17.09.0 or greater][docker]
-
-### Building
-
-Build a release tarball containing `runsc`, the `containerd-shim-runsc-v1`
-containerd shim, and a few sidecar binaries that `runsc` expects to find in a
-`gvisor-bin/` directory next to itself, then extract it to `/usr/local/bin`:
-
-```sh
-make release-tarball DESTINATION=bin/
-sudo tar -C /usr/local/bin -xf bin/gvisor.tar.bz2
+mkdir -p ~/runsc-mac/gvisor-bin
+for f in $(bazelisk cquery --output=files '//runsc:runsc + //runsc/cmd/sentry:gvisor_sentry_hvf + //runsc/cmd/netgofer:runsc-netgofer' 2>/dev/null); do
+  case $f in
+    */runsc) cp -f "$f" ~/runsc-mac/ ;;
+    *)       cp -f "$f" ~/runsc-mac/gvisor-bin/ ;;
+  esac
+done
+chmod -R u+w ~/runsc-mac
+export PATH=~/runsc-mac:$PATH
 ```
 
-To build specific libraries or binaries, you can specify the target:
+### Run an OCI container
 
-```sh
-make build TARGETS="//pkg/tcpip:tcpip"
+Make a bundle with the root filesystem of the `hello-world` image:
+
+```bash
+mkdir bundle
+cd bundle
+mkdir -m 0755 rootfs
+docker export $(docker create hello-world) | tar -xf - -C rootfs
 ```
 
-### Building directly with Bazel (without Docker)
+Make an OCI spec that runs `/hello`, and run the container:
 
-Using Bazel directly isn't recommended due to the extra overhead, but in order
-to get started:
-
--   Look at the [build dockerfile](images/default/Dockerfile) for the canonical
-    list of needed dependencies.
--   Install and use [bazelisk][bazelisk]. Otherwise, make sure your bazel
-    version matches the one listed in the [.bazelversion](.bazelversion) file.
-
-After setting up dependencies, using Bazel is similar to the Makefile:
-
-```sh
-bazel build -c opt //debian:gvisor-release-tar-bz2
+```bash
+runsc spec -- /hello
+runsc --root=$HOME/.runsc run hello
 ```
 
-### Testing
+You see "Hello from Docker!".
 
-To run standard test suites, you can use:
+### Run `dmesg`
 
-```sh
-make unit-tests
-make tests
+`hello-world` has only `/hello`. For `dmesg`, use the `busybox` image:
+
+```bash
+cd ..
+mkdir -p busybox/rootfs
+cd busybox
+docker export $(docker create busybox) | tar -xf - -C rootfs
+runsc spec -- dmesg
+runsc --root=$HOME/.runsc run busybox
 ```
 
-To run specific tests, you can specify the target:
+The output is the gVisor kernel log:
 
-```sh
-# Makefile
-make test TARGETS="//runsc:version_test"
-# Bazel
-bazel test //runsc:version_test
+```
+[   0.000000] Starting gVisor...
+[   0.335682] Daemonizing children...
+...
+[   2.622120] Ready!
 ```
 
-### Mac OS
+### Run a shell
 
-Some packages support running tests directly on macOS. Install Bazelisk with
-Homebrew to select the version pinned by the repository:
-
-```sh
-brew install bazelisk
-
-# You can then run the tests, e.g.:
-bazelisk test --macos_sdk_version=$(xcrun --show-sdk-version) -- //tools/nogo/... //tools/check{aligned,const,escape,linkname,locks,unsafe}/...
+```bash
+rm config.json
+runsc spec -- sh
+runsc --root=$HOME/.runsc run shell
 ```
 
-### Using `go get`
+The shell is interactive (line editing, window size, Ctrl-C). Try `uname -a`,
+`ps` and `wget -qO- http://example.com`. `exit 3` makes `runsc` exit with
+status 3.
 
-This project uses [bazel][bazel] to build and manage dependencies. A synthetic
-`go` branch is maintained that is compatible with standard `go` tooling for
-convenience. This is useful for external packages and libraries that depend on
-gVisor subpackages (e.g. userspace networking via Netstack) to import gVisor Go
-code into their Go projects.
+### The container lifecycle
 
-Select this branch explicitly with the `go` branch query. `@latest` resolves
-`master`, which requires Bazel and is not compatible with standard Go tooling:
+The other OCI commands work as on Linux. Make the container run a long
+process, and then manage it:
 
-```sh
-go get gvisor.dev/gvisor/pkg/tcpip/transport/tcp@go
+```bash
+rm config.json
+runsc spec -- sh -c 'while true; do sleep 1; done'
+
+runsc --root=$HOME/.runsc create --bundle . c1
+runsc --root=$HOME/.runsc start c1
+runsc --root=$HOME/.runsc list
+runsc --root=$HOME/.runsc ps c1
+runsc --root=$HOME/.runsc exec c1 sh -c 'echo hi; exit 7'; echo $?   # 7
+runsc --root=$HOME/.runsc exec c1 sh          # interactive shell in the sandbox
+runsc --root=$HOME/.runsc wait c1 &           # prints {"id":"c1","exitStatus":137} after the kill
+runsc --root=$HOME/.runsc kill c1 KILL
+runsc --root=$HOME/.runsc delete c1
 ```
 
-**NOTE**: **`runsc` builds from this branch are not supported**. gVisor and
-`runsc` require several binaries (some of which are not even written in Go) in
-order to function. The `go` branch is supported in a best effort capacity, and
-direct development on this branch is not supported. Development should occur on
-the `master` branch, which is then reflected into the `go` branch.
+As on Linux, start `wait` before the container exits: when the sandbox is
+gone, `wait` cannot get its exit status.
 
-## Community & Governance
+## Defaults and flags
 
-See [GOVERNANCE.md](GOVERNANCE.md) for project governance information.
+Three flags have other defaults on macOS, the only values that work there:
+`--platform=hvf`, `--directfs=false` and `--ignore-cgroups=true`.
 
-See [ADOPTERS.md](ADOPTERS.md) for a list of known production users and
-adopters.
+-   `--debug --debug-log=/tmp/runsc/` writes one log for each process
+    (`runsc`, Sentry, gofer, network proxy).
+-   `--network=none` gives the container only a loopback interface.
+    `--network=sandbox` (the default) gives it TCP, UDP and DNS through
+    `runsc-netgofer`.
 
-Join us on the [CNCF Slack][cncf-slack] workspace: use [#gvisor][slack-gvisor]
-for questions and discussion, and [#gvisor-dev][slack-gvisor-dev] for
-development and contribution. Before you can join the channels, you must be a
-member of the CNCF Slack workspace:
+## Not supported on macOS yet
 
-1.  Get an invitation from the self-service page at
-    [slack.cncf.io][cncf-slack-invite].
-2.  Accept the invitation that you get in your email.
-3.  Join the [#gvisor][slack-gvisor] and [#gvisor-dev][slack-gvisor-dev]
-    channels.
+-   Checkpoint and restore.
+-   `--network=host` and `--network-proxy-path`.
+-   cgroups and resource limits.
+-   Device gofers, ID-mapped mounts, `nvproxy`, TPU and RDMA.
+-   `amd64` images.
+-   The default `--root` (`/var/run/runsc`) is not writable without root.
+-   In the guest, `tty` prints "not a tty" on a terminal.
 
-The [gvisor-users mailing list][gvisor-users-list] and
-[gvisor-dev mailing list][gvisor-dev-list] are also good starting points for
-questions and discussion.
+## License
 
-## Security Policy
-
-See [SECURITY.md](SECURITY.md).
-
-## Releases
-
-See [Releases](g3doc/release.md).
-
-## Contributing
-
-See [Contributing.md](CONTRIBUTING.md).
-
-[bazel]: https://bazel.build
-[cncf-slack]: https://cloud-native.slack.com
-[cncf-slack-invite]: https://slack.cncf.io/
-[docker]: https://www.docker.com
-[gvisor-users-list]: https://groups.google.com/forum/#!forum/gvisor-users
-[gvisor-dev]: https://gvisor.dev
-[gvisor-dev-list]: https://groups.google.com/forum/#!forum/gvisor-dev
-[linux]: https://en.wikipedia.org/wiki/Linux_kernel_interfaces
-[oci]: https://www.opencontainers.org
-[sandbox]: https://en.wikipedia.org/wiki/Sandbox_(computer_security)
-[slack-gvisor]: https://cloud-native.slack.com/archives/C0CCKLKSN31
-[slack-gvisor-dev]: https://cloud-native.slack.com/archives/C0CCZ4S4V62
-[bazelisk]: https://github.com/bazelbuild/bazelisk
+Apache 2.0. See [LICENSE](LICENSE).
