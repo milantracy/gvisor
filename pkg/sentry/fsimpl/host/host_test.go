@@ -16,6 +16,7 @@ package host
 
 import (
 	"os"
+	"runtime"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -52,6 +53,11 @@ func TestIsPollable(t *testing.T) {
 	defer unix.Close(p[1])
 	if !isPollable(p[0]) {
 		t.Errorf("pipe is not pollable")
+	}
+	if runtime.GOOS != "darwin" {
+		// On Linux, a regular file is pollable if its filesystem implements
+		// poll.
+		return
 	}
 	f, err := os.CreateTemp(t.TempDir(), "regular")
 	if err != nil {
