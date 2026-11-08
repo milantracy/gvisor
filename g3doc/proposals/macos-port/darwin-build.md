@@ -895,8 +895,13 @@ rel/runsc --network=sandbox run --bundle bundle c1
 
 On darwin, three flags have different defaults, the only values that work
 there (`runsc/config/defaults_darwin.go`): `--platform=hvf`,
-`--directfs=false` and `--ignore-cgroups=true`. The default `--root` works
-without root.
+`--directfs=false` and `--ignore-cgroups=true`. The default `--root` is
+`$XDG_RUNTIME_DIR/runsc`, else `/var/run/runsc`, which a user cannot
+create on macOS; pass `--root`. The `README.md` of the prototype branch has
+a quick start, checked on 2026-11-08 (hello-world, `dmesg`, a shell and the
+lifecycle). The check found that a relative `--bundle` (`.`) failed: the
+darwin gofer served the relative root path, which lisafs refuses. The gofer
+now makes its paths absolute.
 
 Result (2026-11-07, busybox and `python:3.13-slim`):
 
