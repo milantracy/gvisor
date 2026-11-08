@@ -220,6 +220,13 @@ reaches `platform/ptrace`, `systrap` or `kvm` for Linux, including the
 linux/amd64 and linux/arm64 nogo analyses of those packages and Linux tests
 that use `contexttest`. Check these on a Linux host, or with `make test`.
 
+`make build` and `make test` run Bazel in a Linux container of Docker
+Desktop (linux/arm64), and work on the Mac without root. The first run
+builds the LLVM toolchain and takes about 30 minutes. After the build,
+`make build` fails in a shell step that copies the outputs ("query: unbound
+variable"); the line before it, "Build completed successfully", is the
+result.
+
 ### Third pass over the demo path (2026-11-07)
 
 | Package | First errors |
@@ -409,11 +416,12 @@ address `0x100000000`) to profile instead.
 
 ## `hvfboot`
 
-`//runsc/hvfboot` is a launcher for the Phase 1 demo, not `runsc`. It boots
-a Sentry on the `hvf` platform, mounts an EROFS image as the root
-filesystem, imports its own standard I/O, and runs one program. It signs a
-copy of itself with the hypervisor entitlement (`//pkg/hvf/entitle`) and
-runs that copy; no developer account is needed.
+`//runsc/hvfboot` is a launcher for one program, not an OCI runtime. It
+runs a Sentry on the `hvf` platform with an EROFS image as the root
+filesystem and its own standard I/O. Since 2026-11-07 it runs the Sentry
+with `boot.Loader`, as `runsc boot` does (see "runsc/boot on darwin"). It
+signs a copy of itself with the hypervisor entitlement
+(`//pkg/hvf/entitle`) and runs that copy; no developer account is needed.
 
 ```
 runsc/hvfboot/make_busybox_image.sh busybox.erofs   # needs Docker
@@ -725,7 +733,10 @@ a network proxy process, as gvproxy (gvisor-tap-vsock) does for Podman:
     route via 10.0.2.2). A new network namespace has `lo` only, as in
     `runsc`. The netlink route socket is registered.
 -   The link of `eth0` is a `SOCK_DGRAM` Unix socket pair: one IP packet per
-    datagram, no link header, MTU 65520. darwin limits a Unix datagram to
+    datagram, no link header, MTU 65520. In the Sentry it is the `fdbased`
+    link that `runsc` makes for an external network proxy (`IsProxy`,
+    `configureProxyLink` in `runsc/sandbox/network.go`). On Linux, that
+    socket is `SOCK_SEQPACKET`, which darwin does not have for Unix sockets. darwin limits a Unix datagram to
     the send buffer size (2 KiB by default), so both ends set 1 MiB send and
     4 MiB receive buffers. The Sentry opens it before it is confined.
 -   `hvfboot net` (the same binary) has its own netstack on the other end,
@@ -774,10 +785,74 @@ Result (2026-11-07, Python 3.13):
 -   40 runs each with and without a host mount, and 20 with
     `-network=none`, complete with no process left.
 -   `python3 -c pass` takes 29 ms (28 ms with `-network=none`); with one host
-    mount, 37 ms.
+    mount, 37 ms. These numbers are from before `boot.Loader`; see
+    "runsc/boot on darwin" for the current numbers.
 
 Next: see the Status section of RESUME.md. `runsc-comparison.md` compares
 each layer with `runsc`.
+
+## runsc/boot on darwin
+
+`runsc/boot` (`boot.Loader`) builds on darwin and runs the Sentry of
+`hvfboot` (2026-11-07). This is phase 1 of moving the port into `runsc`:
+
+1.  `runsc/boot` builds on darwin; `hvfboot` uses `boot.Loader`. Done.
+2.  `runsc boot` and `runsc gofer` on darwin, with Seatbelt in place of
+    seccomp, namespaces and `pivot_root`.
+3.  `runsc/sandbox` and `runsc/container` on darwin.
+4.  The OCI commands (`create`, `start`, `exec`).
+
+The Linux code paths do not change. Linux-only features build on darwin as
+stubs that return errors, and Linux-only system calls move into per-OS
+helpers:
+
+| Package | darwin |
+|---|---|
+| `runsc/specutils` | Namespace, pidfd, memfd and mount functions move to `_linux.go` files, unchanged. `fs.go` uses the mount flags of `//pkg/abi/linux` (the same values; `MS_SILENT` added). |
+| `pkg/sentry/state` | `CPUTime` with `clock_gettime(CLOCK_PROCESS_CPUTIME_ID)`; the vCPU threads are threads of the Sentry. |
+| `state/stateipc` | The watchdog waits for `EV_EOF` with kqueue: darwin has no `POLLRDHUP`, and `poll(2)` reports `POLLHUP` only when both directions are shut down. Huge page advice does nothing. |
+| `tcpip/link/fdbased` | `New` supports only the network proxy link (one FD, no link header, `Readv`); see "Networking". No packet sockets. |
+| `tcpip/link/xdp`, `pkg/xdp` | Linux-only; `New` returns an error. |
+| `socket/hostinet` | Linux-only; `Stack.Configure` returns an error (no `--network=host`). |
+| `devices/nvproxy`, `rdmaproxy`, `tpuproxy` | Build; `mremap(2)` and `MADV_POPULATE_*` go through `hostmm.RawMremap` and `hostmm.MadvisePopulate`, which return `ENOSYS` on darwin. Their seccomp filters are Linux-only. |
+| `fsimpl/sys` | `lstat(2)` in place of an `O_PATH` open for PCI device files. |
+| `runsc/boot/filter` | darwin has no seccomp: `Install` returns an error, and the package does not depend on `filter/config` (`select_system` deps). A caller must disable seccomp and confine the Sentry in a different way. |
+| `runsc/boot` | The compat emitter uses Linux arm64 system call numbers on darwin, not the darwin `unix.SYS_*` numbers. `dup3(2)` and the gofer hangup wait are per-OS helpers (kqueue `EV_EOF` on darwin). |
+| `pkg/sighandling` | Host signals are mapped to Linux numbers. Before, darwin `SIGURG` (16, which the Go runtime uses for preemption) went to the application as Linux signal 16 and killed it. |
+| `socket/unix/transport` | darwin fails `setsockopt(2)` with `EINVAL` and `shutdown(2)` with `ENOTCONN` on a Unix socket whose peer has closed. Before, such a socket as standard input failed the import, and closing it panicked the Sentry. |
+
+`hvfboot` now does what `runsc` does around `runsc boot`:
+
+-   It makes an OCI spec: the program, the default capabilities and mounts of
+    Docker (`/proc`, `/dev`, `/dev/pts`, `/dev/shm`, `/sys`), and each `-v`
+    as a bind mount.
+-   It makes a runsc configuration: `--platform=hvf`, `--directfs=false`,
+    `--overlay2=root:memory` (the root filesystem is writable, in
+    application memory), `--ignore-cgroups`. Seccomp is disabled.
+-   The gofer FDs are in `runsc` order: the EROFS image (mount config
+    `erofs:memory`), then one lisafs socket per `-v` (`lisafs:none`).
+-   It creates the control socket, starts the control server, and sends
+    `containerManager.SetNetworkArgs` (loopback, and the proxy link with
+    `-network=sandbox`).
+-   It applies the Sentry Seatbelt profile, then sends
+    `containerManager.StartRoot`, as `runsc start` does.
+
+Result (2026-11-07): the 14-check Python smoke test, the host mount tests
+(read, write, rename, symlinks, a read-only mount, IDs, `fstat` of
+write-only files), DNS, HTTP and HTTPS, and 40 runs with a host mount pass.
+The Linux build of the changed packages (`make build`, 223 targets) and
+their Linux tests (`make test`: transport, stateio, stateipc, fdbased,
+portforward, specutils) pass.
+
+Startup of `python3 -c pass`, median of 30 runs (p5, p95):
+
+| | Before (own kernel setup) | `boot.Loader` |
+|---|---|---|
+| `-network=none` | 27.8 ms (26.8, 29.1) | 30.0 ms (28.9, 31.0) |
+| `-network=sandbox` | 30.0 ms (29.2, 43.5) | 33.0 ms (31.7, 34.4) |
+
+The Loader itself takes about 7 ms from `boot.New` to the start of the
+program; 4.7 ms of that is the two control RPCs and the Seatbelt profile.
 
 ## vDSO
 

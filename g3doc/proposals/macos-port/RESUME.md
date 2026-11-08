@@ -121,7 +121,19 @@ the mount sources. Networking works as in `runsc`: the Sentry runs netstack
 and has only a packet link, here a datagram socket pair to a network proxy
 process (`hvfboot net`) that makes the host connections and runs under its
 own Seatbelt profile; `pip download` works ("Networking" in
-`darwin-build.md`). Lazy FP state
+`darwin-build.md`).
+
+`hvfboot` is to become `runsc` on darwin, in steps, not a second runtime
+(decided 2026-11-07). Step 1 is done (2026-11-07): `runsc/boot` builds on
+darwin with no change to Linux behavior, and `hvfboot` runs the Sentry
+with `boot.Loader`, its control server and the network and start RPCs, as
+`runsc boot` does. seccomp fails closed on darwin (`filter.Install`
+returns an error), so `hvfboot` disables it and applies the Seatbelt
+profile. The Linux build and tests of the changed packages pass in Docker
+(`make build`, `make test`). Startup is about 3 ms slower (30 ms for
+`python3 -c pass`). Next steps: `runsc boot` and `runsc gofer` on darwin,
+then `runsc/sandbox` and `runsc/container`, then the OCI commands ("runsc/boot
+on darwin" in `darwin-build.md`). Lazy FP state
 and EL0 ID-register `MRS` emulation (low priority: the KVM platform does not
 emulate it either) are deferred.
 

@@ -20,8 +20,8 @@ Status values:
 
 | Layer | runsc on Linux | macOS port | Status |
 |---|---|---|---|
-| Launcher | `runsc` (OCI runtime) creates the sandbox and the gofer, and passes FDs to them (`runsc/container/container.go`, `runsc/sandbox/sandbox.go`) | `hvfboot` (`runsc/hvfboot`), a launcher for one program, not an OCI runtime | Done (launcher); OCI is Later |
-| Sentry process | `runsc boot`, one per sandbox | `hvfboot`, one per run | Done |
+| Launcher | `runsc` (OCI runtime) creates the sandbox and the gofer, and passes FDs to them (`runsc/container/container.go`, `runsc/sandbox/sandbox.go`) | `hvfboot` (`runsc/hvfboot`), a launcher for one program, not an OCI runtime. It makes an OCI spec and a runsc configuration, and passes FDs in `runsc` order | Done (launcher); `runsc` on darwin is Planned |
+| Sentry process | `runsc boot`, one per sandbox; it runs `boot.Loader` (`runsc/boot/loader.go`) | `hvfboot`, one per run; it runs `boot.Loader` with its control server, as `runsc boot` does | Done (`boot.Loader`); `runsc boot` command is Planned |
 | Gofer process | `runsc gofer`, one per container, serves all its mounts (`container.go`: "One gofer process serves all of a container's mounts") | `hvfboot gofer`, one per run, serves all host mounts | Done |
 | Application isolation from the Sentry | Platform: systrap, ptrace or KVM | `hvf` platform on Hypervisor.framework; the application runs at EL0 in a VM, the Sentry on the host | Done |
 
@@ -43,7 +43,7 @@ Status values:
 | Layer | runsc on Linux | macOS port | Status |
 |---|---|---|---|
 | File system view | New mount namespace; `pivot_root` into a read-only tmpfs with `/etc/localtime` and a minimal procfs (`runsc/cmd/sentry/sentrycmd/chroot.go`, `setUpChroot`). The Sentry keeps only FDs that it opened before | No mount namespace, `pivot_root` or bind mounts; `chroot(2)` needs root. A Seatbelt (`sandbox_init`) profile denies all file access; the Sentry opens the EROFS image, gofer sockets and `/etc/localtime` first, and those FDs keep working. The profile allows only `fstat` (`file-read-metadata`) of the standard I/O files and under the mount sources, because Seatbelt checks `fstat` of FDs that are not open for reading | Done |
-| System call filter | seccomp-bpf (`runsc/boot/filter`, installed in `loader.go`) | No seccomp. The Seatbelt profile denies process exec, network and IPC; it filters by operation and path, not by system call | Done |
+| System call filter | seccomp-bpf (`runsc/boot/filter`, installed in `loader.go`) | No seccomp: `filter.Install` returns an error on darwin, so seccomp must be disabled explicitly. The Seatbelt profile denies process exec, network and IPC; it filters by operation and path, not by system call | Done |
 | Namespaces | New IPC, mount, UTS, PID and (if asked) network and user namespaces (`sandbox.go`, the `nss` list) | No namespaces on macOS. Seatbelt covers file, network, IPC and exec access | No equivalent |
 | User | Optional user namespace with UID/GID mappings; can run as nobody | Runs as the calling user. A separate user needs root to set up | Later |
 | Sandbox IDs on host files | Rootless: the user namespace maps sandbox root to the user; other IDs are unmapped | The darwin gofer does the same mapping itself (`MapRootToEffectiveIDs`): 0 is the user, other host IDs are 65534, `chown` to other IDs fails | Done |
@@ -65,7 +65,7 @@ Status values:
 
 | Layer | runsc on Linux | macOS port | Status |
 |---|---|---|---|
-| Default network | netstack in the Sentry; its only link is an `AF_PACKET` socket on a veth in the network namespace of the sandbox (`fdbased`); the host kernel routes and NATs | netstack in the Sentry; its only link is a `SOCK_DGRAM` socket pair to `hvfboot net`, a proxy process that ends TCP and UDP flows in its own netstack and makes host connections | Done (IPv4 TCP and UDP) |
+| Default network | netstack in the Sentry; its only link is an `AF_PACKET` socket on a veth in the network namespace of the sandbox (`fdbased`); the host kernel routes and NATs | netstack in the Sentry; its only link is the `fdbased` link of a `runsc` external network proxy (`IsProxy`), over a `SOCK_DGRAM` socket pair (darwin has no Unix `SOCK_SEQPACKET`) to `hvfboot net`, a proxy process that ends TCP and UDP flows in its own netstack and makes host connections | Done (IPv4 TCP and UDP) |
 | DNS | The `resolv.conf` of the container | Port 53 to any address goes to the host DNS server | Done |
 | Confinement of the network path | The host kernel, with namespaces | The proxy has a Seatbelt profile: outbound IP only, not to the host itself; no files, exec or IPC | Done |
 | New network namespaces | Loopback only | Loopback only | Done |
@@ -96,5 +96,11 @@ Status values:
 2.  Done: Seatbelt profile for the gofer (`//pkg/seatbelt`).
 3.  Done: Seatbelt profile for the Sentry, in place of `pivot_root`.
 4.  Done: networking through a proxy process with its own Seatbelt profile.
+5.  Done: `runsc/boot` builds on darwin; `hvfboot` runs the Sentry with
+    `boot.Loader`.
+6.  Planned: `runsc boot` and `runsc gofer` on darwin, with the Seatbelt
+    profiles in place of `filter.Install`, namespaces and `pivot_root`.
+7.  Planned: `runsc/sandbox` and `runsc/container` on darwin, then the OCI
+    commands.
 
 None of these steps needs root.
