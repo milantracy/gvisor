@@ -110,6 +110,7 @@ const (
 	MS_BIND        = 0x1000
 	MS_MOVE        = 0x2000
 	MS_REC         = 0x4000
+	MS_SILENT      = 0x8000
 
 	MS_POSIXACL    = 0x10000
 	MS_UNBINDABLE  = 0x20000
