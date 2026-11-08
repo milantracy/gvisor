@@ -80,12 +80,6 @@ func (m *fakeMapper) Protect(ipa, size uint64, flags Flags) error {
 	return nil
 }
 
-type part struct {
-	addr   uintptr
-	ipa    uint64
-	length uintptr
-}
-
 func translate(t *testing.T, r *Registry, addr, length uintptr, flags Flags) []part {
 	t.Helper()
 	var parts []part
@@ -125,6 +119,25 @@ func TestTranslateRegistersOnce(t *testing.T) {
 		t.Errorf("Map called %d times, want 1", m.maps)
 	}
 	checkStage2(t, m, append(a, b...))
+}
+
+// TestTranslateReentrant checks that fn can call the Registry: the page
+// tables call Translate for new page table memory while they map a range
+// that Translate returned.
+func TestTranslateReentrant(t *testing.T) {
+	m := newFakeMapper()
+	r := New(m, ipaStart, 1<<40, page, huge)
+	var inner []part
+	outer := translate(t, r, 0x100000, 2*page, Read)
+	if err := r.Translate(0x200000, page, Read, func(addr uintptr, ipa uint64, length uintptr) {
+		inner = translate(t, r, 0x300000, page, Read|Write)
+	}); err != nil {
+		t.Fatalf("Translate: %v", err)
+	}
+	if len(inner) != 1 {
+		t.Fatalf("inner Translate returned %d parts, want 1", len(inner))
+	}
+	checkStage2(t, m, append(outer, inner...))
 }
 
 func TestTranslateFillsGaps(t *testing.T) {

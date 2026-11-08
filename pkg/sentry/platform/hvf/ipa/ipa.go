@@ -142,17 +142,40 @@ func (r *Registry) checkAligned(addr, length uintptr) {
 	}
 }
 
+// part is a host range and its IPA.
+type part struct {
+	addr   uintptr
+	ipa    uint64
+	length uintptr
+}
+
 // Translate calls fn for each part of [addr, addr+length) with the IPA of the
 // part, in order. Parts that are not registered yet are registered and mapped
 // with flags; registered parts get at least flags.
+//
+// Translate calls fn without the lock of the Registry, so fn can call the
+// Registry. If WillReplace unmaps a part before fn uses its IPA, a guest
+// access to the IPA causes a stage-2 fault, and Refault maps the part again.
 //
 // Preconditions:
 //   - addr and length are aligned to the page size.
 //   - [addr, addr+length) is mapped on the host.
 func (r *Registry) Translate(addr, length uintptr, flags Flags, fn func(addr uintptr, ipa uint64, length uintptr)) error {
 	r.checkAligned(addr, length)
+	parts, err := r.translate(addr, length, flags)
+	for _, p := range parts {
+		fn(p.addr, p.ipa, p.length)
+	}
+	return err
+}
+
+// translate returns the parts of [addr, addr+length), and registers and maps
+// them as Translate describes. If it fails, it returns the parts before the
+// failure.
+func (r *Registry) translate(addr, length uintptr, flags Flags) ([]part, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	var parts []part
 	end := addr + length
 	i := r.search(addr)
 	for addr < end {
@@ -164,10 +187,10 @@ func (r *Registry) Translate(addr, length uintptr, flags Flags, fn func(addr uin
 			}
 			ipa, err := r.alloc(addr, gapEnd-addr)
 			if err != nil {
-				return err
+				return parts, err
 			}
 			if err := r.mapper.Map(addr, ipa, uint64(gapEnd-addr), flags); err != nil {
-				return fmt.Errorf("mapping host [%#x, %#x) at IPA %#x: %w", addr, gapEnd, ipa, err)
+				return parts, fmt.Errorf("mapping host [%#x, %#x) at IPA %#x: %w", addr, gapEnd, ipa, err)
 			}
 			r.regions = append(r.regions, region{})
 			copy(r.regions[i+1:], r.regions[i:])
@@ -175,14 +198,14 @@ func (r *Registry) Translate(addr, length uintptr, flags Flags, fn func(addr uin
 		}
 		reg := &r.regions[i]
 		if err := r.ensureMapped(reg, flags); err != nil {
-			return err
+			return parts, err
 		}
 		n := min(end, reg.end()) - addr
-		fn(addr, reg.ipa+uint64(addr-reg.host), n)
+		parts = append(parts, part{addr: addr, ipa: reg.ipa + uint64(addr-reg.host), length: n})
 		addr += n
 		i++
 	}
-	return nil
+	return parts, nil
 }
 
 // ensureMapped maps reg if WillReplace unmapped it, and adds flags to it.
