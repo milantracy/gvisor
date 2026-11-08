@@ -1,11 +1,14 @@
-load("//tools:defs.bzl", "go_library", "go_test")
+# The go_library rule is imported as a different name in this case,
+# in order to avoid automated tooling doing the wrong thing with the
+# operating-specific dependencies listed below.
+load("//tools:defs.bzl", "go_test", "select_system", exempt_go_library = "go_library")
 
 package(
     default_applicable_licenses = ["//:license"],
     licenses = ["notice"],
 )
 
-go_library(
+exempt_go_library(
     name = "sandbox",
     srcs = [
         "cpulimits.go",
@@ -15,6 +18,9 @@ go_library(
         "sandbox.go",
         "xdp.go",
     ],
+    # Nothing needs to be stateified, and stateify has trouble when select is
+    # used to choose deps.
+    stateify = False,
     visibility = [
         "//runsc:__subpackages__",
         "//test:__subpackages__",
@@ -53,16 +59,20 @@ go_library(
         "//runsc/gvisorbinaries",
         "//runsc/hostsettings",
         "//runsc/profile",
-        "//runsc/sandbox/bpf",
         "//runsc/specutils",
         "//runsc/starttime",
-        "@com_github_cilium_ebpf//:go_default_library",
-        "@com_github_cilium_ebpf//link:go_default_library",
         "@com_github_moby_sys_capability//:go_default_library",
         "@com_github_opencontainers_runtime_spec//specs-go:go_default_library",
         "@com_github_vishvananda_netlink//:go_default_library",
         "@org_golang_x_sys//unix:go_default_library",
-    ],
+    ] + select_system(
+        darwin = [],
+        linux = [
+            "//runsc/sandbox/bpf",
+            "@com_github_cilium_ebpf//:go_default_library",
+            "@com_github_cilium_ebpf//link:go_default_library",
+        ],
+    ),
 )
 
 go_test(

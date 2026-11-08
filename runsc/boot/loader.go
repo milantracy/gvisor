@@ -1359,6 +1359,7 @@ func (l *Loader) installSeccompFilters() error {
 			PluginNetwork:         l.root.conf.Network == config.NetworkPlugin,
 			VendorSyscalls:        filter.HostVendorSyscalls(),
 		}
+		l.setHostFilterOptions(&opts)
 		if err := filter.Install(opts, l.startupTimer); err != nil {
 			return fmt.Errorf("installing seccomp filters: %w", err)
 		}

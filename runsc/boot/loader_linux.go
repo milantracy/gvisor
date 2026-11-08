@@ -18,6 +18,7 @@ package boot
 
 import (
 	"golang.org/x/sys/unix"
+	"gvisor.dev/gvisor/runsc/boot/filter"
 	"gvisor.dev/gvisor/runsc/specutils"
 )
 
@@ -41,3 +42,6 @@ func waitForHangup(fd int) error {
 	})
 	return err
 }
+
+// setHostFilterOptions sets the host-specific fields of opts. Linux has none.
+func (l *Loader) setHostFilterOptions(opts *filter.Options) {}

@@ -85,8 +85,6 @@ func newConfig(network string, debug, strace bool) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	// darwin has no seccomp; confineSentry applies a Seatbelt profile.
-	conf.DisableSeccomp = true
 	return conf, nil
 }
 
@@ -207,8 +205,9 @@ func runSandbox(imagePath string, argv []string) (int, error) {
 		mountConfs = append(mountConfs, specutils.GoferMountConf{Lower: specutils.Lisafs, Upper: specutils.NoOverlay})
 	}
 
-	// Open all host resources, then confine the Sentry before it parses
-	// untrusted data (the image and the program).
+	// Open all host resources here. Loader.Run applies the Seatbelt profile
+	// of the Sentry (filter.Install) before the Sentry mounts the image and
+	// loads the program.
 	imageFD, err := unix.Open(imagePath, unix.O_RDONLY|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return 0, fmt.Errorf("opening %s: %w", imagePath, err)
@@ -293,7 +292,7 @@ func runSandbox(imagePath string, argv []string) (int, error) {
 
 	timer.Reached("loader created")
 
-	// Connect to the control server before confinement denies it.
+	// Connect to the control server before confinement denies connect(2).
 	ctrl, err := client.ConnectTo(ctrlPath)
 	if err != nil {
 		return 0, fmt.Errorf("connecting to the control server: %w", err)
@@ -305,13 +304,6 @@ func runSandbox(imagePath string, argv []string) (int, error) {
 		return 0, fmt.Errorf("setting up the network: %w", err)
 	}
 
-	var sources []string
-	for _, v := range volumes {
-		sources = append(sources, v.source)
-	}
-	if err := confineSentry(sources); err != nil {
-		return 0, err
-	}
 	startErr := make(chan error, 1)
 	go func() {
 		cid := containerID

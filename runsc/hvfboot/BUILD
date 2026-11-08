@@ -23,7 +23,6 @@ go_binary(
         "main.go",
         "netproxy.go",
         "runsc.go",
-        "sentry.go",
     ],
     target_compatible_with = [
         "@platforms//os:macos",
@@ -72,7 +71,6 @@ go_test(
         "gofer.go",
         "link.go",
         "netproxy.go",
-        "sentry.go",
     ],
     tags = ["local"],
     target_compatible_with = [

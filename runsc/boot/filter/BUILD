@@ -42,9 +42,25 @@ exempt_go_library(
         "//pkg/sync",
         "//pkg/timing",
     ] + select_system(
-        darwin = [],
+        darwin = [
+            "//pkg/seatbelt",
+            "@org_golang_x_sys//unix:go_default_library",
+        ],
         linux = ["//runsc/boot/filter/config"],
     ),
+)
+
+go_test(
+    name = "filter_darwin_test",
+    size = "small",
+    srcs = ["filter_darwin_test.go"],
+    library = ":filter",
+    tags = ["local"],
+    target_compatible_with = ["@platforms//os:macos"],
+    deps = [
+        "//pkg/timing",
+        "@org_golang_x_sys//unix:go_default_library",
+    ],
 )
 
 secbench_test(

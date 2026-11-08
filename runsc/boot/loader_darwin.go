@@ -17,7 +17,12 @@
 package boot
 
 import (
+	"path/filepath"
+
 	"golang.org/x/sys/unix"
+	"gvisor.dev/gvisor/pkg/log"
+	"gvisor.dev/gvisor/runsc/boot/filter"
+	"gvisor.dev/gvisor/runsc/specutils"
 )
 
 // dupCloexec duplicates oldfd to newfd, with FD_CLOEXEC set on newfd. darwin
@@ -59,5 +64,30 @@ func waitForHangup(fd int) error {
 		if n == 1 && events[0].Flags&unix.EV_EOF != 0 {
 			return nil
 		}
+	}
+}
+
+// setHostFilterOptions sets opts.GoferDirs to the real paths of the host
+// directories that the gofer serves for the root container: the root
+// filesystem if it is a lisafs mount, and the bind mounts.
+func (l *Loader) setHostFilterOptions(opts *filter.Options) {
+	spec := l.root.spec
+	var dirs []string
+	if len(l.root.goferMountConfs) > 0 && l.root.goferMountConfs[0].ShouldUseLisafs() && spec.Root != nil {
+		dirs = append(dirs, spec.Root.Path)
+	}
+	for _, m := range spec.Mounts {
+		if specutils.IsGoferMount(m) {
+			dirs = append(dirs, m.Source)
+		}
+	}
+	for _, d := range dirs {
+		// Seatbelt matches real paths.
+		real, err := filepath.EvalSymlinks(d)
+		if err != nil {
+			log.Warningf("Cannot resolve gofer directory %q: %v", d, err)
+			continue
+		}
+		opts.GoferDirs = append(opts.GoferDirs, real)
 	}
 }
