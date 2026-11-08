@@ -274,9 +274,9 @@ func (f *MmapCachedFile) forEachMappingBlockLocked(fr memmap.FileRange, write bo
 	if fd < 0 {
 		return unix.EBADF
 	}
-	prot := unix.PROT_READ
+	prot, flags := unix.PROT_READ, readOnlyMapFlags
 	if write {
-		prot |= unix.PROT_WRITE
+		prot, flags = unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED
 	}
 	chunkStart := fr.Start &^ chunkMask()
 	if f.mappings == nil {
@@ -290,7 +290,7 @@ func (f *MmapCachedFile) forEachMappingBlockLocked(fr memmap.FileRange, write bo
 				0,
 				uintptr(chunkSize()),
 				uintptr(prot),
-				unix.MAP_SHARED,
+				uintptr(flags),
 				uintptr(fd),
 				uintptr(chunkStart))
 			if errno != 0 {
@@ -348,9 +348,9 @@ func (f *MmapCachedFile) RegenerateMappings() error {
 	defer f.mapsMu.Unlock()
 
 	for chunkStart, m := range f.mappings {
-		prot := unix.PROT_READ
+		prot, flags := unix.PROT_READ, readOnlyMapFlags
 		if m.writable {
-			prot |= unix.PROT_WRITE
+			prot, flags = unix.PROT_READ|unix.PROT_WRITE, unix.MAP_SHARED
 		}
 		memutil.WillReplace(m.addr, uintptr(chunkSize()))
 		_, _, errno := unix.Syscall6(
@@ -358,7 +358,7 @@ func (f *MmapCachedFile) RegenerateMappings() error {
 			m.addr,
 			uintptr(chunkSize()),
 			uintptr(prot),
-			unix.MAP_SHARED|unix.MAP_FIXED,
+			uintptr(flags|unix.MAP_FIXED),
 			uintptr(fd),
 			uintptr(chunkStart))
 		if errno != 0 {

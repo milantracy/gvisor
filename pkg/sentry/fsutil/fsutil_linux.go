@@ -21,3 +21,6 @@ import "golang.org/x/sys/unix"
 // mapFixedNoreplace is MAP_FIXED_NOREPLACE. On Linux before 4.17, the host
 // treats the address as a hint.
 const mapFixedNoreplace = unix.MAP_FIXED_NOREPLACE
+
+// readOnlyMapFlags are the mmap flags of read-only host file mappings.
+const readOnlyMapFlags = unix.MAP_SHARED

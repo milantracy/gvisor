@@ -16,6 +16,17 @@
 
 package fsutil
 
+import "golang.org/x/sys/unix"
+
+// readOnlyMapFlags are the mmap flags of read-only host file mappings.
+// Hypervisor.framework cannot map a MAP_SHARED mapping of a file that is open
+// read-only into a guest, but it can map a MAP_PRIVATE one.
+//
+// darwin does not keep a MAP_PRIVATE mapping coherent with the file: it does
+// not show changes made to the file after the pages were read, also by
+// write(2) through another FD. Writable mappings are MAP_SHARED.
+const readOnlyMapFlags = unix.MAP_PRIVATE
+
 // mapFixedNoreplace is 0: darwin has no MAP_FIXED_NOREPLACE, and treats the
 // address as a hint.
 const mapFixedNoreplace = 0
