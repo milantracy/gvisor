@@ -45,7 +45,7 @@ table compares each layer on Linux and on macOS.
 | 5. Files | A separate gofer process gives access to files. It has its own seccomp filter. It sees only the files of the container. | A separate gofer process gives access to files. Its Seatbelt profile lets it use only the directories of the container, and a private temporary directory. It runs as your user. | **Almost the same** |
 | 6. Network | The network stack is in the Sentry. The host side is in its own network namespace. | The network stack is in the Sentry. The Sentry has no network access. The network proxy makes the connections. Its Seatbelt profile lets it make only outgoing connections. It cannot connect to the addresses of the Mac (`localhost` and the addresses of the network interfaces). | **Almost the same** |
 | 7. Resource limits | cgroups limit memory, CPU and the number of processes. | There are no limits. A container can use all of the memory and CPU of the Mac. | **Weaker** |
-| 8. Review and tests | Many years of security review, fuzzing and tests. | New code. No security review. No fuzzing. The gVisor system call tests do not run on macOS yet. | **Weaker** |
+| 8. Review and tests | Many years of security review, fuzzing and tests. | New code. No security review. No fuzzing. Only 60 of the gVisor system call test binaries run on macOS (see [Compatibility](COMPATIBILITY-MACOS.md#system-call-tests)). | **Weaker** |
 
 ## What an attacker must do
 
@@ -113,7 +113,8 @@ These items can make the macOS layers stronger. They are not done.
 3.  **Limit resources.** The Sentry can limit the memory that the
     application uses. `setrlimit` can limit the number of files and
     processes.
-4.  **Review and test.** Run the gVisor system call tests on macOS. Fuzz
+4.  **Review and test.** Run all of the gVisor system call tests on macOS,
+    not only 60 binaries. Fuzz
     the code that handles VM exits and VM memory. Do a security review of
     the Hypervisor.framework platform before it goes into gVisor.
 

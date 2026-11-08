@@ -39,10 +39,108 @@ Mac yet.
 | `busybox` | `dmesg`, interactive `sh`, OCI lifecycle (see [README](README.md)) | Pass |
 | `hello-world` | `/hello` | Pass |
 
+## System call tests
+
+We ran 60 binaries of the gVisor system call tests
+(`//test/syscalls/linux`) on macOS. The binaries test files, pipes,
+`poll` and `epoll`, processes, signals, memory, clocks, Unix, TCP and UDP
+sockets, terminals and `/proc`. The list is in
+[`test/syscalls/macos/subset.txt`](test/syscalls/macos/subset.txt). The
+scripts and the setup are in
+[`test/syscalls/macos`](test/syscalls/macos/README.md).
+
+| Item | Value |
+|---|---|
+| Date | 2026-11-08 |
+| Commit | `54ffc20cf` |
+| Network | `--network=none` |
+| Cases | 3092 |
+| Pass | 2993 |
+| Fail | 0 |
+| Skip | 99 (the tests skip these cases on gVisor, or on this platform) |
+
+The setup is the same as the Linux test runner (`//test/runner`), with
+these differences:
+
+-   All cases of a binary run in one sandbox, not one sandbox for each case.
+-   Only `--network=none`, and only the default root overlay. The other
+    variants of each test (for example with `add_overlay` or `fuse`) do
+    not run.
+-   `time_test` has no cases on `arm64`.
+
+Before the setup was the same as the runner, three cases failed. They were
+problems of the setup, not of gVisor: `ExecTest.SUIDExecGainsUID` and
+`ExecTest.SGIDExecGainsGID` need `--allow-suid`, and
+`PrctlTest.OrphansReparentedToSubreaper` needs a test helper that is built
+for 16 KiB pages.
+
+| Binary | Pass | Skip | Fail |
+|---|---|---|---|
+| `brk_test` | 1 | 0 | 0 |
+| `chmod_test` | 19 | 0 | 0 |
+| `clock_gettime_test` | 10 | 0 | 0 |
+| `clock_nanosleep_test` | 14 | 0 | 0 |
+| `dup_test` | 11 | 0 | 0 |
+| `epoll_test` | 23 | 0 | 0 |
+| `eventfd_test` | 11 | 0 | 0 |
+| `exec_test` | 73 | 0 | 0 |
+| `exit_test` | 6 | 0 | 0 |
+| `fcntl_test` | 96 | 0 | 0 |
+| `fork_test` | 22 | 0 | 0 |
+| `futex_test` | 65 | 0 | 0 |
+| `getdents_test` | 23 | 0 | 0 |
+| `getrandom_test` | 1 | 0 | 0 |
+| `itimer_test` | 4 | 0 | 0 |
+| `kill_test` | 13 | 0 | 0 |
+| `link_test` | 23 | 0 | 0 |
+| `lseek_test` | 14 | 1 | 0 |
+| `madvise_test` | 18 | 0 | 0 |
+| `mkdir_test` | 7 | 0 | 0 |
+| `mmap_test` | 118 | 0 | 0 |
+| `mremap_test` | 33 | 0 | 0 |
+| `munmap_test` | 3 | 0 | 0 |
+| `open_create_test` | 16 | 0 | 0 |
+| `open_test` | 38 | 0 | 0 |
+| `pipe_test` | 156 | 4 | 0 |
+| `poll_test` | 25 | 0 | 0 |
+| `ppoll_test` | 9 | 0 | 0 |
+| `prctl_test` | 13 | 0 | 0 |
+| `pread64_test` | 12 | 0 | 0 |
+| `proc_test` | 157 | 0 | 0 |
+| `pty_test` | 121 | 1 | 0 |
+| `pwrite64_test` | 11 | 0 | 0 |
+| `read_test` | 8 | 0 | 0 |
+| `readv_test` | 32 | 0 | 0 |
+| `rename_test` | 44 | 0 | 0 |
+| `rlimits_test` | 7 | 0 | 0 |
+| `sched_yield_test` | 1 | 0 | 0 |
+| `select_test` | 9 | 0 | 0 |
+| `sigaction_test` | 7 | 0 | 0 |
+| `sigaltstack_test` | 5 | 0 | 0 |
+| `signalfd_test` | 19 | 0 | 0 |
+| `sigprocmask_test` | 8 | 0 | 0 |
+| `socket_unix_pair_test` | 831 | 82 | 0 |
+| `socket_unix_stream_test` | 216 | 0 | 0 |
+| `stat_test` | 57 | 0 | 0 |
+| `statfs_test` | 9 | 0 | 0 |
+| `symlink_test` | 33 | 0 | 0 |
+| `tcp_socket_test` | 186 | 4 | 0 |
+| `time_test` | 0 | 0 | 0 |
+| `timerfd_test` | 28 | 0 | 0 |
+| `truncate_test` | 11 | 0 | 0 |
+| `udp_socket_test` | 159 | 5 | 0 |
+| `uidgid_test` | 26 | 0 | 0 |
+| `uname_test` | 4 | 0 | 0 |
+| `unlink_test` | 22 | 1 | 0 |
+| `vdso_clock_gettime_test` | 2 | 0 | 0 |
+| `vfork_test` | 4 | 0 | 0 |
+| `wait_test` | 64 | 0 | 0 |
+| `write_test` | 35 | 1 | 0 |
+
 ## Problems found and fixed
 
-The tests found these problems in the macOS port. All of them are fixed in
-the commit above.
+The image tests found these problems in the macOS port. All of them are
+fixed.
 
 | Problem | Effect | Fix |
 |---|---|---|
@@ -50,6 +148,13 @@ the commit above.
 | The guest virtual counter and the host counter were different. | The vDSO clocks moved only once each second. In Go, `time.Now()` did not change, and `go test` showed `0.000s`. | `bb9a3d1bf` |
 | Hypervisor.framework sometimes returns an undocumented "unknown" exit. | The task got `SIGKILL`. About one in three `initdb` runs failed, and a fast shutdown of PostgreSQL could hang. | `84b8fae50` |
 | The gofer used relative paths when the bundle path was relative. | `runsc create --bundle .` failed. | `efaed680e` |
+
+These problems were not found by an image, but are fixed:
+
+| Problem | Effect | Fix |
+|---|---|---|
+| A read of an ID register (`MRS`, for example of `MIDR_EL1`) by the application was not emulated. Linux emulates it. | The application got `SIGILL`. | `ed3b118b5` |
+| The default `--root` (`/var/run/runsc`) is writable only by root. | Each command needed `--root`. | `54ffc20cf`: the default is `$TMPDIR/runsc` |
 
 ## Differences from Docker
 

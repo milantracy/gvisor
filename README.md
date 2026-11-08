@@ -42,8 +42,8 @@ at build time with the `com.apple.security.hypervisor` entitlement.
 
 This follows the
 [OCI quick start](https://gvisor.dev/docs/user_guide/quick_start/oci/) of
-gVisor. The differences on macOS: no `sudo`, and `--root` must be a
-directory that you can write.
+gVisor. The difference on macOS: no `sudo`. The default `--root` is
+`$TMPDIR/runsc`, a directory of your user.
 
 ### Build `runsc`
 
@@ -79,7 +79,7 @@ Make an OCI spec that runs `/hello`, and run the container:
 
 ```bash
 runsc spec -- /hello
-runsc --root=$HOME/.runsc run hello
+runsc run hello
 ```
 
 You see "Hello from Docker!".
@@ -94,7 +94,7 @@ mkdir -p busybox/rootfs
 cd busybox
 docker export $(docker create busybox) | tar -xf - -C rootfs
 runsc spec -- dmesg
-runsc --root=$HOME/.runsc run busybox
+runsc run busybox
 ```
 
 The output is the gVisor kernel log:
@@ -111,12 +111,17 @@ The output is the gVisor kernel log:
 ```bash
 rm config.json
 runsc spec -- sh
-runsc --root=$HOME/.runsc run shell
+sed -i '' 's/"process": {/"process": {"terminal": true,/' config.json
+runsc run shell
 ```
 
 The shell is interactive (line editing, window size, Ctrl-C). Try `uname -a`,
 `ps` and `wget -qO- http://example.com`. `exit 3` makes `runsc` exit with
 status 3.
+
+`"terminal": true` gives the shell a controlling terminal, so job control
+works. Without it, `sh` prints "can't access tty; job control turned off".
+As on Linux, `runsc spec` does not set it.
 
 ### The container lifecycle
 
@@ -127,15 +132,15 @@ process, and then manage it:
 rm config.json
 runsc spec -- sh -c 'while true; do sleep 1; done'
 
-runsc --root=$HOME/.runsc create --bundle . c1
-runsc --root=$HOME/.runsc start c1
-runsc --root=$HOME/.runsc list
-runsc --root=$HOME/.runsc ps c1
-runsc --root=$HOME/.runsc exec c1 sh -c 'echo hi; exit 7'; echo $?   # 7
-runsc --root=$HOME/.runsc exec c1 sh          # interactive shell in the sandbox
-runsc --root=$HOME/.runsc wait c1 &           # prints {"id":"c1","exitStatus":137} after the kill
-runsc --root=$HOME/.runsc kill c1 KILL
-runsc --root=$HOME/.runsc delete c1
+runsc create --bundle . c1
+runsc start c1
+runsc list
+runsc ps c1
+runsc exec c1 sh -c 'echo hi; exit 7'; echo $?   # 7
+runsc exec c1 sh          # interactive shell in the sandbox
+runsc wait c1 &           # prints {"id":"c1","exitStatus":137} after the kill
+runsc kill c1 KILL
+runsc delete c1
 ```
 
 As on Linux, start `wait` before the container exits: when the sandbox is
@@ -148,13 +153,19 @@ numpy and pandas), `node` (with `npm` and Express), `golang`, `nginx`,
 `redis` and `postgres`. Some images need more setup than with Docker: DNS,
 capabilities, a writable root filesystem, and the file owners of the image.
 
+60 of the gVisor system call test binaries (about 3100 test cases) run on
+macOS, with no failures.
+
 See [the compatibility list](COMPATIBILITY-MACOS.md) for the images that we
-tried, the tests, the results, and the setup that each image needs.
+tried, the system call tests, the results, and the setup that each image
+needs.
 
 ## Defaults and flags
 
 Three flags have other defaults on macOS, the only values that work there:
-`--platform=hvf`, `--directfs=false` and `--ignore-cgroups=true`.
+`--platform=hvf`, `--directfs=false` and `--ignore-cgroups=true`. The
+default `--root` is `$XDG_RUNTIME_DIR/runsc` if `XDG_RUNTIME_DIR` is set,
+and `$TMPDIR/runsc` if not.
 
 -   `--debug --debug-log=/tmp/runsc/` writes one log for each process
     (`runsc`, Sentry, gofer, network proxy).
@@ -169,8 +180,9 @@ Three flags have other defaults on macOS, the only values that work there:
 -   cgroups and resource limits.
 -   Device gofers, ID-mapped mounts, `nvproxy`, TPU and RDMA.
 -   `amd64` images.
--   The default `--root` (`/var/run/runsc`) is not writable without root.
--   In the guest, `tty` prints "not a tty" on a terminal.
+
+In the guest, `tty` prints "not a tty" on a terminal. `runsc` on Linux does
+the same: the terminal has no path in the guest.
 
 ## License
 
