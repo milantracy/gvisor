@@ -11,6 +11,8 @@ go_library(
         "forwardcmd.go",
         "metric_metadata.go",
         "statefile.go",
+        "statefile_output_darwin.go",
+        "statefile_output_linux.go",
         "symbolize.go",
         "syscalls.go",
     ],
@@ -36,6 +38,7 @@ go_test(
     name = "forwardcmd_test",
     size = "small",
     srcs = ["statefile_test.go"],
+    target_compatible_with = ["@platforms//os:linux"],
     embed = [":forwardcmd"],
     deps = [
         "//pkg/state/statefile",

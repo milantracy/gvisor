@@ -1,3 +1,4 @@
+load("//pkg/hvf/entitle:defs.bzl", "hvf_signed_binary")
 load("//tools:defs.bzl", "go_binary", "go_cov")
 load("//tools:deps.bzl", "deps_test")
 
@@ -17,6 +18,19 @@ go_binary(
         "//runsc/cli/sentrycli",
         "//runsc/gvisorbinaries",
     ],
+)
+
+# On macOS, the Sentry needs the hypervisor entitlement for the hvf platform.
+# gvisor_sentry_hvf is gvisor_sentry, ad-hoc signed with it.
+hvf_signed_binary(
+    name = "gvisor_sentry_hvf",
+    binary = ":gvisor_sentry",
+    out = "gvisor_sentry",
+    target_compatible_with = [
+        "@platforms//os:macos",
+        "@platforms//cpu:aarch64",
+    ],
+    visibility = ["//visibility:public"],
 )
 
 go_binary(

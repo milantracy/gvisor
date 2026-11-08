@@ -9,6 +9,7 @@ go_library(
     name = "coretag",
     srcs = [
         "coretag.go",
+        "coretag_darwin.go",
         "coretag_unsafe.go",
     ],
     visibility = ["//:sandbox"],
@@ -27,6 +28,7 @@ go_test(
     embed = [":coretag"],
     pure = True,
     tags = ["nogotsan"],
+    target_compatible_with = ["@platforms//os:linux"],
     deps = [
         "@org_golang_x_sys//unix:go_default_library",
     ],

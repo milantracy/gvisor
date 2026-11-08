@@ -9,6 +9,8 @@ go_library(
     name = "cli",
     srcs = [
         "cli.go",
+        "dup_darwin.go",
+        "dup_linux.go",
         "help.go",
     ],
     importpath = "gvisor.dev/gvisor/runsc/cli",

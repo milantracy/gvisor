@@ -16,8 +16,11 @@ go_library(
         "fdmappings.go",
         "flags.go",
         "fs.go",
+        "fs_linux.go",
         "gofer_mount.go",
+        "gofer_socket.go",
         "process.go",
+        "process_linux.go",
     ],
     visibility = ["//visibility:public"],
     deps = [
@@ -45,4 +48,5 @@ go_test(
     size = "small",
     srcs = ["gofer_mount_test.go"],
     embed = [":sandboxsetup"],
+    target_compatible_with = ["@platforms//os:linux"],
 )

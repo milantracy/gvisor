@@ -254,7 +254,7 @@ func Run(sidecar *gvisorbinaries.Binary, commands map[util.SubCommand]string, he
 		// want with them. Since Docker and Containerd both eat boot's stderr, we
 		// dup our stderr to the provided log FD so that panics will appear in the
 		// logs, rather than just disappear.
-		if err := unix.Dup3(fd, int(os.Stderr.Fd()), 0); err != nil {
+		if err := dupTo(fd, int(os.Stderr.Fd())); err != nil {
 			util.Fatalf("error dup'ing fd %d to stderr: %v", fd, err)
 		}
 	} else if conf.AlsoLogToStderr {

@@ -9,6 +9,8 @@ go_library(
     name = "sentrycmd",
     srcs = [
         "boot.go",
+        "boot_darwin.go",
+        "boot_linux.go",
         "chroot.go",
         "nvproxy.go",
         "syscalls.go",
@@ -58,6 +60,7 @@ go_test(
     size = "small",
     srcs = ["chroot_test.go"],
     embed = [":sentrycmd"],
+    target_compatible_with = ["@platforms//os:linux"],
     deps = [
         "//runsc/config",
         "//runsc/specutils",
