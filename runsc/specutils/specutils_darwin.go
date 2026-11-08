@@ -196,3 +196,13 @@ func MaybeRunAsRoot() error {
 
 // UnmountNullNetNS does nothing on darwin, which has no network namespaces.
 func UnmountNullNetNS(sharedRootDir string) {}
+
+// selfExePath returns the path of the running binary. darwin has no
+// /proc/self/exe; the path is the one that the kernel reported at exec time.
+func selfExePath() string {
+	p, err := os.Executable()
+	if err != nil {
+		panic(fmt.Sprintf("cannot find the path of the running binary: %v", err))
+	}
+	return p
+}

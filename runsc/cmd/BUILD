@@ -15,6 +15,8 @@ go_library(
         "debug.go",
         "delete.go",
         "do.go",
+        "do_darwin.go",
+        "do_linux.go",
         "events.go",
         "exec.go",
         "features.go",

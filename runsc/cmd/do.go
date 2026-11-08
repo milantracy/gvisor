@@ -250,28 +250,11 @@ func (c *Do) Execute(_ context.Context, f *flag.FlagSet, args ...any) subcommand
 		return util.Errorf("FetchSpec failed: %v", err)
 	}
 
-	if conf.Network == config.NetworkNone {
-		addNamespace(spec, specs.LinuxNamespace{Type: specs.NetworkNamespace})
-	} else if conf.Rootless {
-		if conf.Network == config.NetworkSandbox {
-			c.notifyUser("*** Warning: sandbox network isn't supported with --rootless, switching to host ***")
-			conf.Network = config.NetworkHost
-		}
-	} else {
-		switch clean, err := c.setupNet(cid, spec); err {
-		case errNoDefaultInterface:
-			log.Warningf("Network interface not found, using internal network")
-			addNamespace(spec, specs.LinuxNamespace{Type: specs.NetworkNamespace})
-			conf.Network = config.NetworkHost
-
-		case nil:
-			// Setup successful.
-			defer clean()
-
-		default:
-			return util.Errorf("Error setting up network: %v", err)
-		}
+	clean, err := c.setupNetwork(conf, cid, spec)
+	if err != nil {
+		return util.Errorf("%v", err)
 	}
+	defer clean()
 
 	return startContainerAndWait(spec, conf, cid, waitStatus)
 }

@@ -159,13 +159,14 @@ func startNetworkProxy(conf *config.Config, pid int, link *os.File) error {
 		"--mtu="+strconv.Itoa(proxyLinkMTU),
 		"--sandbox-pid="+strconv.Itoa(pid),
 		"--sandbox-addr="+proxySandboxAddr.String(),
-		"--gateway-addr="+proxyGatewayAddr.String(),
 		"--prefix-len="+strconv.Itoa(proxyPrefixLen),
 	)
 	cmd := exec.Command(path, args...)
 	cmd.Args[0] = "runsc-netgofer"
 	cmd.ExtraFiles = []*os.File{link}
 	cmd.Env = os.Environ()
+	// The proxy logs to the debug log; its stderr shows startup errors.
+	cmd.Stderr = os.Stderr
 	// Detach from this session: the proxy outlives `runsc start`.
 	cmd.SysProcAttr = &unix.SysProcAttr{Setsid: true}
 	log.Debugf("Starting network proxy: %s %v", path, cmd.Args)

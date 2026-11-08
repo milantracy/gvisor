@@ -92,7 +92,7 @@ const (
 
 // ExePath must point to runsc binary, which is normally the same binary. It's
 // changed in tests that aren't linked in the same binary.
-var ExePath = "/proc/self/exe"
+var ExePath = selfExePath()
 
 // Version is the supported spec version.
 var Version = specs.Version

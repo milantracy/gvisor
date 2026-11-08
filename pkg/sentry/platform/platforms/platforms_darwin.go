@@ -17,4 +17,7 @@
 
 package platforms
 
-// This file makes the platforms package buildable on Darwin.
+import (
+	// hvf is the only platform on darwin.
+	_ "gvisor.dev/gvisor/pkg/sentry/platform/hvf"
+)

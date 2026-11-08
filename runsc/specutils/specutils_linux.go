@@ -266,3 +266,8 @@ func SafeMount(src, dst, fstype string, flags uintptr, data, procPath string) er
 	}
 	return nil
 }
+
+// selfExePath returns the path of the running binary.
+func selfExePath() string {
+	return "/proc/self/exe"
+}

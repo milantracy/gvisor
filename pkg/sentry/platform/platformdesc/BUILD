@@ -10,6 +10,7 @@ go_library(
     srcs = [
         "platformdesc.go",
         "platformdesc_amd64.go",
+        "platformdesc_darwin.go",
     ],
     visibility = ["//pkg/sentry:internal"],
     deps = [

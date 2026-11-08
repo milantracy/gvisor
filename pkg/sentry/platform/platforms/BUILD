@@ -22,7 +22,7 @@ exempt_go_library(
         "//:sandbox",
     ],
     deps = select_system(
-        darwin = [],
+        darwin = ["//pkg/sentry/platform/hvf"],
         linux = [
             "//pkg/sentry/platform/%s" % platform
             for platform in platforms
