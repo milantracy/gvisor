@@ -63,10 +63,14 @@ func CopySpec(spec *specs.Spec) (*os.File, error) {
 // process.
 func kinfoProc(pid int) (*unix.KinfoProc, error) {
 	kp, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+	if err == unix.EIO {
+		// The sysctl returns no entry for a PID with no process, which
+		// SysctlKinfoProc reports as EIO.
+		return nil, unix.ESRCH
+	}
 	if err != nil {
 		return nil, err
 	}
-	// The sysctl returns an empty entry for a PID with no process.
 	if int(kp.Proc.P_pid) != pid {
 		return nil, unix.ESRCH
 	}

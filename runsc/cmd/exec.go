@@ -171,6 +171,12 @@ func (ex *Exec) Execute(_ context.Context, f *flag.FlagSet, args ...any) subcomm
 		fdMap[mapping.Guest] = file
 	}
 
+	if !ex.detach {
+		// The relays end after the file descriptors in fdMap are closed
+		// below.
+		defer relayHostFiles(fdMap)()
+	}
+
 	var execFile *os.File
 	if ex.execFD >= 0 {
 		execFile = os.NewFile(uintptr(ex.execFD), "exec-fd")

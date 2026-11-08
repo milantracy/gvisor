@@ -44,10 +44,10 @@ func (c *Container) startGoferProcess(conf *config.Config, specFile *os.File, mo
 	if shouldCreateDeviceGofer(c.Spec, conf) {
 		return nil, nil, nil, nil, fmt.Errorf("device gofers are not supported on darwin")
 	}
-	if willNeedHostRPC, err := goferWillNeedHostRPC(c.Spec); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("cannot determine whether the gofer needs gofer-to-host RPCs: %w", err)
-	} else if willNeedHostRPC {
-		return nil, nil, nil, nil, fmt.Errorf("ID-mapped mounts are not supported on darwin")
+	for _, m := range c.Spec.Mounts {
+		if specutils.IsIDMappedMount(m) {
+			return nil, nil, nil, nil, fmt.Errorf("ID-mapped mount %q is not supported on darwin", m.Destination)
+		}
 	}
 
 	// Ensure we don't leak FDs to the gofer process.
