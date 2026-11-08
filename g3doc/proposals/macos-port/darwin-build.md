@@ -607,6 +607,20 @@ pass. No gofer process is left after the run. `python3 -c pass` takes 22 ms
 without a mount and 31 ms with one; the gofer process start is most of the
 difference.
 
+Memory mappings of host files: Hypervisor.framework cannot map a
+`MAP_SHARED` mapping of a file that is open read-only (`hv_vm_map` fails with
+`HV_ERROR`), as for EROFS images. So on darwin, `fsutil.MmapCachedFile` maps
+read-only host files `MAP_PRIVATE`; writable mappings stay `MAP_SHARED`.
+darwin does not keep a `MAP_PRIVATE` mapping coherent with the file (checked:
+a `pwrite(2)` after the pages were read does not show in the mapping). So a
+read-only mapping of a host file does not show later changes made through
+other FDs, by host processes or by `write(2)` in the sandbox. The fix is a
+page cache in the Sentry for these files; in the shared mode
+(`cache=remote_revalidating`) the client has none and fails `mmap` without a
+host FD (`ENODEV`). Before this change, every `mmap` of a file on a host
+mount through a read-only FD faulted, for example the shared libraries of a
+Python package installed on a host mount (2026-11-07).
+
 ### Confinement of the gofer
 
 `runsc gofer` confines itself with a `chroot` into the mount sources, a
