@@ -34,6 +34,7 @@ Status values:
 | lisafs server | `runsc/gofer/fs` (`lisafs.go`); `Gofer.serve` makes one `lisafs.Server` and one connection per io FD | The same package; darwin host calls in `lisafs_darwin.go` | Done |
 | lisafs wire format | Linux flags and Linux errnos | The same; the darwin server translates flags and errnos | Done |
 | Host file access from the Sentry | directfs: the gofer donates host FDs and the Sentry makes file system calls on them | lisafs only; directfs uses `O_PATH`, `statx`, `AT_EMPTY_PATH` and fails with `EINVAL` if asked for | Done (lisafs only) |
+| FDs given to a running Sentry (`runsc exec` stdio) | Sent with `SCM_RIGHTS`; the Sentry imports any FD. seccomp allows `fstat` on any FD and `statx`/`newfstatat` only with `AT_EMPTY_PATH`, and the Sentry has no host paths after `pivot_root`. An FD is a capability; a path gives nothing | Seatbelt checks `fstat` of a write-only FD against the path of its file, and the profile allows only the paths open at confinement. `runsc exec` replaces each write-only stdio file that has a path with a pipe and copies from it. Pipes, sockets, ttys and FDs open for reading pass unchanged. The application sees a pipe, so `lseek` and `ftruncate` on it fail | Done |
 | Root file system | Gofer-served rootfs with an overlay, or an EROFS image opened by the Sentry (no gofer for `/`) | The same | Done |
 | Bind mounts | Spec mounts, served by the gofer | The same | Done |
 | `/dev` | devtmpfs in the Sentry, optional `/dev` gofer (`--dev-io-fd`) | devtmpfs and memory devices in the Sentry; no `/dev` gofer | Done (devtmpfs) |
@@ -75,6 +76,12 @@ Status values:
 
 ## Known differences that remain
 
+-   `runsc exec` stdio redirected to a file reaches the application as a
+    pipe (see "FDs given to a running Sentry"). This is a decision
+    (2026-11-07): the other option, `file-read-metadata` for all paths in
+    the Sentry profile, gives the exact Linux behavior but lets a
+    compromised Sentry read the metadata of any host path, which Linux
+    does not allow.
 -   Seatbelt restricts access by path rules; it is not a separate view of the
     file system. A confined process can still learn that a denied path
     exists, if the profile allows `stat` of the parents of its mount paths.
