@@ -964,8 +964,9 @@ the `kvm` subtests (Docker Desktop has no `/dev/kvm`) and the EROFS chunk
 tests (the `mkfs.erofs` 1.4 of the builder image has no `--chunksize`).
 Two `cmd_test` subtests fail, `TestStatefileOutputSymlinks/dev_stdout_*`
 and `.../proc_fd_symlink_*`, with "error opening output". Their code moved
-into `statefile_output_linux.go` unchanged. They are not yet compared with
-`master`: the Docker VM was out of disk space for a second workspace.
+into `statefile_output_linux.go` unchanged, and they fail in the same way
+on `master` (`f51a205a8`) in the same Docker setup, so they are not caused
+by the port.
 
 `runsc/gofer/net` on darwin has a copy of the `hvfboot net` proxy. One of
 the two is to go when `hvfboot` is removed or uses the netgofer.

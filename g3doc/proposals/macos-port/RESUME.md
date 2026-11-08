@@ -137,8 +137,8 @@ runs `python3 -c pass` in 37 ms. The Linux code paths do not change: Linux
 code moved into `_linux.go` files, and the Linux build and the tests of the
 changed packages build in Docker, and their tests pass except as listed
 in "runsc commands" in `darwin-build.md` (kvm subtests without `/dev/kvm`,
-and two `TestStatefileOutputSymlinks` subtests not yet compared with
-`master`). The Linux run found that checkpoint failed on 4K builds
+and two `TestStatefileOutputSymlinks` subtests that fail on `master` in
+the same Docker setup). The Linux run found that checkpoint failed on 4K builds
 because of a missing `_arm64_16k` stateify suffix; it is fixed.
 
 Next steps:
