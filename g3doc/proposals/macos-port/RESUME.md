@@ -153,7 +153,18 @@ non-root file owners need the rootfs tar annotation, because a non-root
 `tar` on macOS cannot keep owners. The prototype branch also has
 `SECURITY-MACOS.md`.
 
+System call tests (2026-11-08, prototype `54ffc20cf`): 60 binaries of
+`//test/syscalls/linux` run under `runsc` on hvf with the setup of
+`//test/runner`; 2993 cases pass, 0 fail, 99 skip ("System call tests" in
+`darwin-build.md`; scripts in `test/syscalls/macos`). EL0 reads of the ID
+registers are now emulated as Linux does (`ed3b118b5`), and the default
+`--root` is `$TMPDIR/runsc` (`54ffc20cf`). `tty` printing "not a tty" is
+the same on Linux `runsc`, so it is not a darwin gap.
+
 Next steps:
+
+-   Run more of the system call test binaries (254 in all), and the
+    `add_overlay` and gofer-root variants.
 
 -   Remove `hvfboot`, or make it a thin wrapper over `runsc do`; its
     network proxy is now a copy of the one in `runsc/gofer/net`.
@@ -163,8 +174,7 @@ Next steps:
     macOS runs containerd in a Linux VM, so `docker --runtime` cannot use a
     darwin `runsc`.
 
-Lazy FP state and EL0 ID-register `MRS` emulation (low priority: the KVM
-platform does not emulate it either) are deferred.
+Lazy FP state is deferred.
 
 ## Phase 0 probe plan (done)
 

@@ -829,6 +829,60 @@ Platform bugs that the sweep found:
     `SIGKILL` (one in three PostgreSQL `initdb` runs). Unknown exits now
     enter the guest again; 100 in a row fail.
 
+## System call tests
+
+On 2026-11-08 (prototype `54ffc20cf`), 60 binaries of
+`//test/syscalls/linux` ran under `runsc` on hvf: 2993 cases pass, 0 fail,
+99 skip. The scripts are in `test/syscalls/macos` on the prototype branch;
+the per-binary results are in `COMPATIBILITY-MACOS.md`.
+
+-   `//test/runner` runs only on Linux, so `run.py` does its job: the spec of
+    `testutil.NewSpecWithArgs`, the `runsc` flags of the runner that apply on
+    darwin (`--allow-suid`, `--net-raw`, `--allow-packet-socket-write`,
+    `--watchdog-action=panic`), `TEST_ON_GVISOR=hvf`, and the `kvm` row of
+    `platform_capabilities` in `GVISOR_PLATFORM_SUPPORT`. It runs one
+    sandbox per binary, and one per case only for cases without a result.
+-   The binaries are built in the Docker build container and link the glibc
+    of Ubuntu 22.04, so the root filesystem is `ubuntu:22.04` plus the
+    merged runfiles at `/runfiles` (`RUNFILES_DIR`).
+-   Go test helpers that import `pkg/hostarch` (`test/cmd/test_app`) print
+    "host page size mismatch" when built for 4 KiB pages, because the guest
+    has 16 KiB pages. That broke `PrctlTest.OrphansReparentedToSubreaper`;
+    `mkrootfs.sh` builds `test_app` with `--//tools/bazeldefs:page_size=16k`.
+-   `make build` with many targets fails after the build, in the path query
+    (`target_query` quoting). `mkrootfs.sh` checks for "Build completed
+    successfully" and copies the outputs from the container. After a build
+    in another configuration, `bazel-bin` points there, so the runfiles are
+    copied before the 16 KiB build.
+
+## ID registers
+
+An `MRS` of an ID register at EL0 traps to EL1 (EC 0x18). Linux emulates
+these reads (`do_emulate_mrs`), and systrap gets this from the host kernel;
+hvf sent `SIGILL`. `cpuid.FeatureSet.IDRegister` returns the value of a
+register in the emulated space (op0 3, op1 0, CRn 0, CRm 0 or 2-7). The
+feature fields are made from `AllowedHWCap1`, so they agree with `AT_HWCAP`;
+`MIDR_EL1` comes from the CPU fields of the feature set, `MPIDR_EL1` is
+bit 31, other registers read as 0. The hvf vector writes Rt, moves PC by 4
+and returns `ErrContextInterrupt`, so the Sentry enters the guest again
+from the saved state. `HWCAP_CPUID` stays unset, as on every platform
+(`AllowedHWCap1` does not include it). On the M2 Max a guest reads
+`ID_AA64ISAR0_EL1 = 0x11100110212120` (prototype `ed3b118b5`).
+
+## Default root and `tty`
+
+The default `--root` on darwin is `$XDG_RUNTIME_DIR/runsc`, then
+`$TMPDIR/runsc` (per user, mode 0700 parent, emptied at boot), then
+`/var/run/runsc` (prototype `54ffc20cf`). With a long `$TMPDIR`, a control
+socket path can be longer than 104 bytes for long container IDs;
+`createControlSocket` then falls back to `/var/run`, `/run` and `/tmp`, as on
+Linux.
+
+`tty` in the guest prints "not a tty": fd 0 links to `host:[1]` and there is
+no `/dev/console`. Linux `runsc do` in the Docker build container shows the
+same, so this is not a darwin gap and is not changed. Job control needs
+`"terminal": true` in the spec, which `runsc spec` does not set.
+
 ## runsc on darwin
 
 `runsc` runs on darwin (2026-11-07), as an OCI runtime with the same
