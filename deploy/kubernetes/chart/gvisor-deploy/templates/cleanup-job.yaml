@@ -1,0 +1,97 @@
+{{- if .Values.cleanupOnUninstall }}
+# On `helm uninstall`, switch the installer DaemonSet to uninstall mode and
+# wait until gVisor is removed from all nodes, before Helm deletes the
+# DaemonSet.
+#
+# The Job has its own ServiceAccount, which exists only while the hook runs:
+# permission to change the privileged DaemonSet must not be available to the
+# installer pods on every node.
+{{- $name := printf "%s-cleanup" (include "gvisor-deploy.name" .) }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gvisor-deploy.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gvisor-deploy.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+rules:
+  - apiGroups: ["apps"]
+    resources: ["daemonsets"]
+    resourceNames: [{{ include "gvisor-deploy.name" . | quote }}]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gvisor-deploy.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gvisor-deploy.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-delete
+    helm.sh/hook-weight: "0"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  # Fail before the default Helm hook timeout (5m), with a clear message.
+  backoffLimit: 0
+  activeDeadlineSeconds: 290
+  template:
+    metadata:
+      labels:
+        {{- include "gvisor-deploy.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ $name }}
+      restartPolicy: Never
+      containers:
+        - name: cleanup
+          image: {{ include "gvisor-deploy.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["trigger-uninstall"]
+          env:
+            - name: DAEMONSET_NAMESPACE
+              value: {{ .Release.Namespace }}
+            - name: DAEMONSET_NAME
+              value: {{ include "gvisor-deploy.name" . }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65534
+            capabilities:
+              drop: ["ALL"]
+{{- end }}

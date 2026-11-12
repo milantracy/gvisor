@@ -1,0 +1,9 @@
+apiVersion: v2
+name: gvisor-deploy
+description: Install gVisor (runsc) on Kubernetes nodes and register a RuntimeClass.
+type: application
+version: 0.1.0
+appVersion: "latest"
+home: https://gvisor.dev
+sources:
+  - https://github.com/google/gvisor

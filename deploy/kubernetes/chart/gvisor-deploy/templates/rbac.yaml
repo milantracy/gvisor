@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "gvisor-deploy.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gvisor-deploy.labels" . | nindent 4 }}
+---
+# The installer labels its own node once gVisor is ready on it. RBAC cannot
+# limit this to one node or one label; node-policy.yaml does.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "gvisor-deploy.name" . }}
+  labels:
+    {{- include "gvisor-deploy.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "gvisor-deploy.name" . }}
+  labels:
+    {{- include "gvisor-deploy.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "gvisor-deploy.name" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "gvisor-deploy.name" . }}
+    namespace: {{ .Release.Namespace }}

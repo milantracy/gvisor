@@ -1,0 +1,53 @@
+{{- if .Values.restrictNodeUpdates }}
+# Limits the installer ServiceAccount to the gvisor.dev/runsc label of the
+# node that the calling pod runs on. Without this, a token taken from one
+# node can change any node. Needs Kubernetes 1.30 or later (bound
+# ServiceAccount tokens carry the node name).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ include "gvisor-deploy.name" . }}-node-label
+  labels:
+    {{- include "gvisor-deploy.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["UPDATE"]
+        resources: ["nodes"]
+  matchConditions:
+    - name: installer-serviceaccount
+      expression: >-
+        request.userInfo.username == 'system:serviceaccount:{{ .Release.Namespace }}:{{ include "gvisor-deploy.name" . }}'
+  validations:
+    - expression: >-
+        'authentication.kubernetes.io/node-name' in request.userInfo.extra &&
+        object.metadata.name == request.userInfo.extra['authentication.kubernetes.io/node-name'][0]
+      message: the gVisor installer can only update the node it runs on
+    - expression: >-
+        object.spec == oldObject.spec &&
+        (has(object.metadata.annotations) ? object.metadata.annotations : {}) ==
+        (has(oldObject.metadata.annotations) ? oldObject.metadata.annotations : {})
+      message: the gVisor installer can only change the gvisor.dev/runsc label
+    - expression: >-
+        object.metadata.labels.all(k, k == 'gvisor.dev/runsc' ||
+          (k in oldObject.metadata.labels && oldObject.metadata.labels[k] == object.metadata.labels[k])) &&
+        oldObject.metadata.labels.all(k, k == 'gvisor.dev/runsc' || k in object.metadata.labels)
+      message: the gVisor installer can only change the gvisor.dev/runsc label
+    - expression: >-
+        !('gvisor.dev/runsc' in object.metadata.labels) ||
+        object.metadata.labels['gvisor.dev/runsc'] == 'installed'
+      message: the gvisor.dev/runsc label can only be set to "installed"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ include "gvisor-deploy.name" . }}-node-label
+  labels:
+    {{- include "gvisor-deploy.labels" . | nindent 4 }}
+spec:
+  policyName: {{ include "gvisor-deploy.name" . }}-node-label
+  validationActions: [Deny]
+{{- end }}

@@ -1,0 +1,58 @@
+# Installer image. It contains runsc, containerd-shim-runsc-v1 and the
+# installer binary.
+image:
+  repository: gvisor-installer
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Name of the RuntimeClass to create. Pods use gVisor with
+# `runtimeClassName: <name>`.
+runtimeClass:
+  create: true
+  name: runsc
+  # Optional pod overhead, e.g. {cpu: 100m, memory: 64Mi}.
+  overhead: {}
+
+# Name of the containerd runtime handler.
+runtimeHandler: runsc
+
+# runsc flags, written to the [runsc_config] section of runsc.toml.
+# Example: {platform: systrap, nvproxy: "true"}
+runscFlags: {}
+
+# Pod annotations that containerd passes to runsc. "dev.gvisor.*" allows
+# per-pod settings such as dev.gvisor.flag.* (with allow-flag-override).
+podAnnotations:
+  - dev.gvisor.*
+
+# Host paths. Do not change them after install: the old paths are not
+# cleaned up.
+installDir: /opt/gvisor
+containerd:
+  # Config of a plain containerd setup. k3s is detected and handled apart.
+  configPath: /etc/containerd/config.toml
+  # Command that restarts containerd. Empty means `systemctl restart` of the
+  # detected unit (containerd, k3s or k3s-agent).
+  restartCommand: ""
+
+# Nodes to install gVisor on. Empty means all nodes. Do not narrow it after
+# install: nodes that leave the selection keep gVisor and the node label.
+nodeSelector: {}
+# The installer tolerates all taints by default, so that it also runs on
+# dedicated (tainted) sandbox node pools.
+tolerations:
+  - operator: Exists
+
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
+
+# Run a cleanup Job on `helm uninstall` that removes gVisor from all nodes.
+cleanupOnUninstall: true
+
+# Create a ValidatingAdmissionPolicy that limits the installer to the
+# gvisor.dev/runsc label of its own node. Needs Kubernetes 1.30 or later.
+restrictNodeUpdates: true

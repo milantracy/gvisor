@@ -1,0 +1,143 @@
+// Copyright 2026 The gVisor Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package main
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestConfigVersion(t *testing.T) {
+	for _, tc := range []struct {
+		config string
+		want   int
+	}{
+		{"version = 2\n[plugins]\n", 2},
+		{"# comment\nversion=3 # x\n", 3},
+		{"[plugins]\nversion = 3\n", 0},
+		{"", 0},
+	} {
+		got, err := configVersion(tc.config)
+		if err != nil || got != tc.want {
+			t.Errorf("configVersion(%q) = %d, %v; want %d", tc.config, got, err, tc.want)
+		}
+	}
+}
+
+func testBlock(t *testing.T, version int, shim string) string {
+	t.Helper()
+	b, err := runtimeBlock(version, "runsc", shim, "/etc/gvisor/runsc.toml", []string{"dev.gvisor.*"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func TestRuntimeBlock(t *testing.T) {
+	got := testBlock(t, 3, "/opt/gvisor/bin/containerd-shim-runsc-v1")
+	for _, want := range []string{
+		blockBegin + "\n",
+		`[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.runsc]`,
+		`runtime_path = "/opt/gvisor/bin/containerd-shim-runsc-v1"`,
+		`pod_annotations = ["dev.gvisor.*"]`,
+		`ConfigPath = "/etc/gvisor/runsc.toml"`,
+		blockEnd + "\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("block missing %q:\n%s", want, got)
+		}
+	}
+	if v2 := testBlock(t, 2, "x"); !strings.Contains(v2, `[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]`) {
+		t.Errorf("version 2 block uses the wrong plugin:\n%s", v2)
+	}
+	if v4 := testBlock(t, 4, "x"); !strings.Contains(v4, `[plugins."io.containerd.cri.v1.runtime".containerd.runtimes.runsc]`) {
+		t.Errorf("version 4 block uses the wrong plugin:\n%s", v4)
+	}
+	for _, v := range []int{1, 5} {
+		if _, err := runtimeBlock(v, "runsc", "a", "b", nil); err == nil {
+			t.Errorf("version %d accepted", v)
+		}
+	}
+}
+
+func TestSetRemoveBlock(t *testing.T) {
+	block := testBlock(t, 2, "/a")
+	for _, config := range []string{
+		"version = 2\n\n[plugins.\"io.containerd.grpc.v1.cri\".containerd.runtimes.runc]\n  runtime_type = \"io.containerd.runc.v2\"\n",
+		"version = 2\n[plugins]\n  x = 1", // No trailing newline.
+		"version = 2\n\n",
+		"",
+	} {
+		got, err := setBlock(config, block, "runsc")
+		if err != nil {
+			t.Fatalf("setBlock(%q): %v", config, err)
+		}
+		if !strings.HasPrefix(got, config) || !strings.HasSuffix(got, block[strings.Index(block, "\n"):]) {
+			t.Errorf("setBlock(%q) = %q, want the config followed by the block", config, got)
+		}
+		again, err := setBlock(got, block, "runsc")
+		if err != nil || again != got {
+			t.Errorf("setBlock is not idempotent: %q, %v", again, err)
+		}
+		updated, err := setBlock(got, testBlock(t, 2, "/b"), "runsc")
+		if err != nil || strings.Count(updated, blockBegin) != 1 || !strings.Contains(updated, `"/b"`) || strings.Contains(updated, `"/a"`) {
+			t.Errorf("setBlock does not replace the old block: %q, %v", updated, err)
+		}
+		back, err := removeBlock(got)
+		if err != nil {
+			t.Fatalf("removeBlock: %v", err)
+		}
+		if back != config {
+			t.Errorf("removeBlock does not restore the config:\n got %q\nwant %q", back, config)
+		}
+	}
+}
+
+func TestSetBlockConflicts(t *testing.T) {
+	block := testBlock(t, 2, "/a")
+	for _, config := range []string{
+		"version = 2\n[plugins.\"io.containerd.grpc.v1.cri\".containerd.runtimes.runsc]\n",
+		"version = 2\n[plugins.\"io.containerd.grpc.v1.cri\".containerd.runtimes.runsc.options]\n",
+		"version = 2\n[plugins.\"io.containerd.grpc.v1.cri\".containerd.runtimes.\"runsc\"]\n",
+		"version = 4\n[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.'runsc']\n",
+		"version = 3\n[plugins.'io.containerd.cri.v1.runtime'.containerd]\n  runtimes.runsc = { runtime_type = \"x\" }\n",
+		"version = 2\n[plugins.\"io.containerd.grpc.v1.cri\".containerd.runtimes]\n  runsc = { runtime_type = \"x\" }\n",
+		"version = 2\n[plugins.\"io.containerd.grpc.v1.cri\".containerd.runtimes]\n  runsc.runtime_type = \"x\"\n",
+		"{{ template \"base\" . }}\n[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes]\n  runsc = { runtime_type = \"x\" }\n",
+	} {
+		if _, err := setBlock(config, block, "runsc"); err == nil {
+			t.Errorf("setBlock accepted a config that already defines runsc: %q", config)
+		}
+	}
+	if _, err := removeBlock("x\n" + blockBegin + "\n[a]\n"); err == nil {
+		t.Errorf("removeBlock accepted a block without end marker")
+	}
+}
+
+func TestRunscConfig(t *testing.T) {
+	got, err := runscConfig("/opt/gvisor/versions/x/runsc", []string{"platform=systrap", " --debug = true ", ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "# Generated by gvisor-deploy. Do not edit.\nbinary_name = \"/opt/gvisor/versions/x/runsc\"\n\n[runsc_config]\n  platform = \"systrap\"\n  debug = \"true\"\n"
+	if got != want {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+	for _, bad := range []string{"noequals", "a b=c", "=x", "x]\n[y=1"} {
+		if _, err := runscConfig("r", []string{bad}); err == nil {
+			t.Errorf("runscConfig accepted %q", bad)
+		}
+	}
+}

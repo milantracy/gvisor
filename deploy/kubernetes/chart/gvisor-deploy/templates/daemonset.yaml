@@ -1,0 +1,85 @@
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" .Values.runtimeHandler) }}
+{{- fail (printf "runtimeHandler %q is not a valid handler name (a DNS label)" .Values.runtimeHandler) }}
+{{- end }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "gvisor-deploy.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gvisor-deploy.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "gvisor-deploy.selector" . | nindent 6 }}
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 10%
+  template:
+    metadata:
+      labels:
+        {{- include "gvisor-deploy.selector" . | nindent 8 }}
+      annotations:
+        # The cleanup Job sets this to "uninstall".
+        gvisor.dev/deploy-mode: install
+    spec:
+      serviceAccountName: {{ include "gvisor-deploy.name" . }}
+      # hostPID lets the installer enter the host namespaces to restart
+      # containerd, and see host processes to keep binaries that are in use.
+      hostPID: true
+      priorityClassName: system-node-critical
+      terminationGracePeriodSeconds: 5
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: installer
+          image: {{ include "gvisor-deploy.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["run"]
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: MODE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['gvisor.dev/deploy-mode']
+            - name: RUNTIME_HANDLER
+              value: {{ .Values.runtimeHandler | quote }}
+            - name: INSTALL_DIR
+              value: {{ .Values.installDir | quote }}
+            - name: CONTAINERD_CONFIG
+              value: {{ .Values.containerd.configPath | quote }}
+            - name: RESTART_COMMAND
+              value: {{ .Values.containerd.restartCommand | quote }}
+            - name: POD_ANNOTATIONS
+              value: {{ join " " .Values.podAnnotations | quote }}
+            - name: RUNSC_FLAGS
+              value: |
+                {{- range $k, $v := .Values.runscFlags }}
+                {{ $k }}={{ $v }}
+                {{- end }}
+          readinessProbe:
+            exec:
+              command: ["/usr/local/bin/gvisor-installer", "probe"]
+            periodSeconds: 2
+          securityContext:
+            privileged: true
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: host
+              mountPath: /host
+      volumes:
+        - name: host
+          hostPath:
+            path: /
+            type: Directory
